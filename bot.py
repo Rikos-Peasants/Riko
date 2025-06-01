@@ -58,27 +58,37 @@ class RikoBot(commands.Bot):
         """Setup hook called when bot is starting"""
         logger.info("Setting up bot...")
         
-        # Register commands and events
+        # Register commands and events FIRST
         self.commands_controller.register_commands()
         self.events_controller.register_events()
+        
+        # Wait for registration to complete
+        await asyncio.sleep(0.5)
+        
+        # Show registered commands for debugging
+        logger.info(f"Registered {len(self.tree.get_commands())} app commands globally")
+        logger.info(f"Registered {len(self.tree.get_commands(guild=discord.Object(id=Config.GUILD_ID)))} app commands for guild")
         
         # Sync commands to enable slash command functionality
         logger.info("Syncing hybrid commands...")
         try:
-            # Sync to specific guild first
+            # First try guild-specific sync for faster updates
             guild = discord.Object(id=Config.GUILD_ID)
-            synced = await self.tree.sync(guild=guild)
-            logger.info(f"Successfully synced {len(synced)} commands to guild {Config.GUILD_ID}")
+            synced_guild = await self.tree.sync(guild=guild)
+            logger.info(f"Successfully synced {len(synced_guild)} commands to guild {Config.GUILD_ID}")
             
+            # Also sync globally for other servers
+            synced_global = await self.tree.sync()
+            logger.info(f"Successfully synced {len(synced_global)} commands globally")
+            
+            # List the synced commands
+            for cmd in synced_global:
+                logger.info(f"  - Global command: /{cmd.name} - {cmd.description}")
+                
         except Exception as e:
-            logger.error(f"Failed to sync commands to guild: {e}")
-            # Try global sync as fallback
-            try:
-                logger.info("Trying global command sync as fallback...")
-                synced = await self.tree.sync()
-                logger.info(f"Fallback: Synced {len(synced)} commands globally")
-            except Exception as global_e:
-                logger.error(f"Global sync also failed: {global_e}")
+            logger.error(f"Failed to sync commands: {e}")
+            logger.error("This might be due to missing 'applications.commands' scope")
+            logger.error("Please reinvite the bot with proper permissions")
     
     async def on_ready(self):
         """Called when bot is ready"""
@@ -86,6 +96,11 @@ class RikoBot(commands.Bot):
         logger.info(f'Bot is in {len(self.guilds)} guilds')
         logger.info(f'Text command prefix: R!')
         logger.info(f'Commands available as both text (R!command) and slash (/command)')
+        
+        # Generate proper invite URL
+        bot_id = self.user.id if self.user else "YOUR_BOT_ID"
+        invite_url = f"https://discord.com/api/oauth2/authorize?client_id={bot_id}&permissions=268437568&scope=bot%20applications.commands"
+        logger.info(f"Bot invite URL (with applications.commands): {invite_url}")
         
         # Start the status cycling task
         if not self.cycle_status.is_running():
