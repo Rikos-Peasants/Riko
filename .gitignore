@@ -136,6 +136,18 @@ ENV/
 env.bak/
 venv.bak/
 
+# Virtual environments (additional common names)
+venv/
+.venv/
+env/
+.env/
+virtualenv/
+.virtualenv/
+
+# Docker
+logs/
+*.log
+
 # Spyder project settings
 .spyderproject
 .spyproject
