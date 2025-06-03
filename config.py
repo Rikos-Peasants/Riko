@@ -10,6 +10,12 @@ class Config:
     BANNED_ROLE_ID = int(os.getenv('BANNED_ROLE_ID'))
     RESTRICTED_ROLE_ID = int(os.getenv('RESTRICTED_ROLE_ID'))
     
+    # Image reaction channels
+    IMAGE_REACTION_CHANNELS = [
+        1282209034916855809,
+        1378693276206370969
+    ]
+    
     @classmethod
     def validate(cls):
         """Validate that all required environment variables are set"""
