@@ -7,6 +7,7 @@ from config import Config
 from controllers.commands import CommandsController
 from controllers.events import EventsController
 from controllers.scheduler import SchedulerController
+from models.mongo_leaderboard_manager import MongoLeaderboardManager
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -26,6 +27,14 @@ class RikoBot(commands.Bot):
             intents=intents,
             case_insensitive=True
         )
+        
+        # Initialize MongoDB-based leaderboard manager
+        try:
+            self.leaderboard_manager = MongoLeaderboardManager()
+            logger.info("✅ MongoDB leaderboard manager initialized successfully")
+        except Exception as e:
+            logger.error(f"❌ Failed to initialize MongoDB: {e}")
+            raise e
         
         # Initialize controllers
         self.commands_controller = CommandsController(self)
@@ -165,6 +174,11 @@ class RikoBot(commands.Bot):
         
         # Stop scheduler tasks
         self.scheduler_controller.stop_tasks()
+        
+        # Close MongoDB connection
+        if hasattr(self, 'leaderboard_manager'):
+            self.leaderboard_manager.close()
+            logger.info("MongoDB connection closed")
         
         # Call parent close
         await super().close()

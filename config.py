@@ -9,6 +9,7 @@ class Config:
     GUILD_ID = int(os.getenv('GUILD_ID'))
     BANNED_ROLE_ID = int(os.getenv('BANNED_ROLE_ID'))
     RESTRICTED_ROLE_ID = int(os.getenv('RESTRICTED_ROLE_ID'))
+    MONGO_URI = os.getenv('MONGO_URI')
     
     # Image reaction channels
     IMAGE_REACTION_CHANNELS = [
@@ -26,4 +27,6 @@ class Config:
         if not cls.BANNED_ROLE_ID:
             raise ValueError("BANNED_ROLE_ID is not set in environment variables")
         if not cls.RESTRICTED_ROLE_ID:
-            raise ValueError("RESTRICTED_ROLE_ID is not set in environment variables") 
+            raise ValueError("RESTRICTED_ROLE_ID is not set in environment variables")
+        if not cls.MONGO_URI:
+            raise ValueError("MONGO_URI is not set in environment variables") 

@@ -1,10 +1,14 @@
 # Riko Discord Bot
 
-A professional Discord bot built with discord.py using MVC architecture that prevents users with a specific banned role from accessing restricted roles.
+A professional Discord bot built with discord.py using MVC architecture that prevents users with a specific banned role from accessing restricted roles. Features image voting leaderboards with MongoDB storage.
 
 ## Features
 
 - **Role Management**: Automatically prevents users with banned role from getting restricted role
+- **Image Voting System**: Automatic 👍👎 reactions on images with real-time leaderboard tracking
+- **MongoDB Integration**: Cloud-based data storage with real-time updates and backups
+- **Best Image Posts**: Weekly, monthly, and yearly best image announcements
+- **Leaderboard Commands**: View top users by image upvotes and personal statistics
 - **Access Control**: Sends embed notification when access is denied
 - **Hybrid Commands**: Support both text commands (`R!command`) and slash commands (`/command`)
 - **Uptime Command**: Check bot uptime with `R!uptime` or `/uptime`
@@ -22,12 +26,22 @@ A professional Discord bot built with discord.py using MVC architecture that pre
    sudo apt install docker.io docker-compose  # Ubuntu/Debian
    ```
 
-2. **Start the Bot**
+2. **Configure Environment**
+   - Update the `.env` file with your configuration:
+   ```env
+   DISCORD_TOKEN=your_bot_token_here
+   GUILD_ID=your_guild_id
+   BANNED_ROLE_ID=your_banned_role_id
+   RESTRICTED_ROLE_ID=your_restricted_role_id
+   MONGO_URI=your_mongodb_connection_string
+   ```
+
+3. **Start the Bot**
    ```bash
    ./docker-start.sh
    ```
 
-3. **Manage the Bot**
+4. **Manage the Bot**
    ```bash
    # View logs
    docker-compose logs -f
@@ -50,38 +64,80 @@ A professional Discord bot built with discord.py using MVC architecture that pre
    ```
 
 2. **Configure Environment**
-   - The `.env` file is already configured with your bot token and role IDs
+   - Update the `.env` file with your bot token, role IDs, and MongoDB URI
    - Make sure your bot has the following permissions:
      - Read Messages
      - Send Messages
+     - Add Reactions
      - Manage Roles
      - Use Slash Commands
+     - Read Message History
 
 3. **Run the Bot**
    ```bash
    python bot.py
    ```
 
+## MongoDB Setup
+
+The bot uses MongoDB for storing leaderboard data. Configure your MongoDB connection in the `.env` file:
+
+```env
+MONGO_URI=mongodb+srv://username:password@cluster.mongodb.net/database
+```
+
+### Migrating from JSON (if upgrading)
+
+If you have existing JSON data, use the migration script:
+
+```bash
+python migrate_to_mongo.py
+```
+
+## Commands
+
+All commands support both text and slash formats:
+
+| Command | Text Format | Slash Format | Description | Access |
+|---------|------------|--------------|-------------|--------|
+| Uptime | `R!uptime` | `/uptime` | Shows bot uptime | Everyone |
+| Leaderboard | `R!leaderboard` | `/leaderboard` | Shows image voting leaderboard | Everyone |
+| Stats | `R!stats [@user]` | `/stats [user]` | Shows user's image statistics | Everyone |
+| Process Old | `R!processold` | `/processold` | Process historical images (past year) | Owners Only |
+| Best Week | `R!bestweek` | `/bestweek` | Manually post best image of week | Owners Only |
+| Best Month | `R!bestmonth` | `/bestmonth` | Manually post best image of month | Owners Only |
+| Best Year | `R!bestyear` | `/bestyear` | Manually post best image of year | Owners Only |
+| DB Status | `R!dbstatus` | `/dbstatus` | Check MongoDB connection status | Owners Only |
+| Test Owner | `R!testowner` | `/testowner` | Test bot owner permissions | Owners Only |
+
+## Image Voting System
+
+- **Automatic Reactions**: Bot adds 👍👎 to all images in configured channels
+- **Real-time Tracking**: Votes are tracked instantly in MongoDB
+- **Net Scoring**: Score = 👍 votes - 👎 votes
+- **Leaderboard**: Users ranked by total net score across all images
+- **Best Image Posts**: Automatic weekly (Sunday), monthly (1st), yearly (Jan 1st) posts
+
 ## Project Structure
 
 ```
-├── bot.py                 # Main bot file
-├── config.py             # Configuration management
-├── requirements.txt      # Dependencies
-├── .env                 # Environment variables
-├── Dockerfile            # Docker container configuration
-├── docker-compose.yml    # Docker Compose setup
-├── docker-start.sh       # Convenient startup script
-├── models/              # Data models
+├── bot.py                          # Main bot file
+├── config.py                       # Configuration management  
+├── requirements.txt                # Dependencies
+├── .env                           # Environment variables (includes MongoDB URI)
+├── migrate_to_mongo.py            # JSON to MongoDB migration script
+├── models/                        # Data models
 │   ├── __init__.py
-│   └── role_manager.py  # Role management logic
-├── views/               # UI components
+│   ├── mongo_leaderboard_manager.py  # MongoDB operations
+│   └── role_manager.py            # Role management logic
+├── views/                         # UI components
 │   ├── __init__.py
-│   └── embeds.py        # Discord embeds
-└── controllers/         # Business logic
+│   └── embeds.py                  # Discord embeds
+└── controllers/                   # Business logic
     ├── __init__.py
-    ├── commands.py      # Hybrid commands
-    └── events.py        # Discord events
+    ├── commands.py                # Hybrid commands
+    ├── events.py                  # Discord events (includes image tracking)
+    └── scheduler.py               # Scheduled tasks for best image posts
 ```
 
 ## Troubleshooting
@@ -114,42 +170,6 @@ The bot cycles through humorous status messages every 2 minutes, including:
 - "Listening to random people yap in DMs"
 - "Watching new messages & ideas pile up"
 - And many more hilarious statuses!
-
-## Commands
-
-All commands support both text and slash formats:
-
-| Command | Text Format | Slash Format | Description |
-|---------|------------|--------------|-------------|
-| Uptime | `R!uptime` | `/uptime` | Shows bot uptime |
-
-## Adding New Hybrid Commands
-
-To add new hybrid commands, follow this pattern in `controllers/commands.py`:
-
-1. Add your command method to the `CommandsController` class
-2. Register it in the `register_commands` method using `@bot.hybrid_command()`
-
-Example:
-```python
-@self.bot.hybrid_command(name="example", description="Example command")
-async def example_command(ctx):
-    """Example hybrid command"""
-    await ctx.send("Hello! Use R!example or /example")
-```
-
-## Adding New Status Messages
-
-To add more funny status messages, edit the `status_messages` list in `bot.py`:
-
-```python
-self.status_messages = [
-    ("watching", "your custom message here"),
-    ("listening", "to something funny"),
-    ("playing", "with new features"),
-    # Add more here...
-]
-```
 
 ## Configuration
 

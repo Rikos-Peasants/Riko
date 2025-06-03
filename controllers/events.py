@@ -32,6 +32,14 @@ class EventsController:
         async def on_command(ctx: commands.Context):
             """Log when commands are successfully invoked"""
             logger.info(f"Command '{ctx.command.name}' invoked by {ctx.author.display_name} in #{ctx.channel.name}")
+        
+        @self.bot.event
+        async def on_reaction_add(reaction: discord.Reaction, user: discord.User):
+            await self._handle_reaction_change(reaction, user, added=True)
+        
+        @self.bot.event
+        async def on_reaction_remove(reaction: discord.Reaction, user: discord.User):
+            await self._handle_reaction_change(reaction, user, added=False)
     
     async def _handle_member_update(self, before: discord.Member, after: discord.Member):
         """Handle member role updates"""
@@ -63,7 +71,7 @@ class EventsController:
                     # Bot doesn't have permission to remove roles
                     print(f"Failed to remove role from {after.display_name}: Missing permissions")
                 except Exception as e:
-                    print(f"Error handling role update for {after.display_name}: {e}")
+                    print(f"Error handling role update for {after.display_name}: {e}") 
     
     async def _handle_message(self, message: discord.Message):
         """Handle new messages for image reactions"""
@@ -108,6 +116,14 @@ class EventsController:
                 await message.add_reaction('👍')
                 await message.add_reaction('👎')
                 logger.info(f"Added reactions to image in {message.channel.name} by {message.author.display_name}")
+                
+                # Track the image post in leaderboard
+                self.bot.leaderboard_manager.add_image_post(
+                    user_id=message.author.id,
+                    user_name=message.author.display_name,
+                    initial_score=0  # Start with 0, will be updated when reactions happen
+                )
+                
             except discord.Forbidden:
                 logger.error(f"Missing permission to add reactions in {message.channel.name}")
             except Exception as e:
@@ -127,3 +143,61 @@ class EventsController:
         else:
             logger.error(f"Command error in {ctx.command.name}: {error}")
             await ctx.send(f"❌ An error occurred: {str(error)}", ephemeral=True) 
+    
+    async def _handle_reaction_change(self, reaction: discord.Reaction, user: discord.User, added: bool):
+        """Handle reaction additions and removals for leaderboard tracking"""
+        # Ignore bot reactions
+        if user.bot:
+            return
+        
+        # Only track reactions in image channels
+        if not hasattr(reaction.message, 'guild') or not reaction.message.guild:
+            return
+        
+        if reaction.message.guild.id != Config.GUILD_ID:
+            return
+        
+        if reaction.message.channel.id not in Config.IMAGE_REACTION_CHANNELS:
+            return
+        
+        # Only track thumbs up and thumbs down
+        if str(reaction.emoji) not in ['👍', '👎']:
+            return
+        
+        # Check if the message has images
+        message = reaction.message
+        has_image = False
+        
+        # Check for attachments (uploaded images)
+        for attachment in message.attachments:
+            if any(attachment.filename.lower().endswith(ext) for ext in ['.png', '.jpg', '.jpeg', '.gif', '.webp']):
+                has_image = True
+                break
+        
+        # Check for embedded images (links)
+        if not has_image:
+            for embed in message.embeds:
+                if embed.image or embed.thumbnail:
+                    has_image = True
+                    break
+        
+        if not has_image:
+            return
+        
+        # Calculate score change
+        score_change = 0
+        if str(reaction.emoji) == '👍':
+            score_change = 1 if added else -1
+        elif str(reaction.emoji) == '👎':
+            score_change = -1 if added else 1
+        
+        # Update the leaderboard for the image author
+        if score_change != 0:
+            self.bot.leaderboard_manager.update_image_score(
+                user_id=message.author.id,
+                user_name=message.author.display_name,
+                score_change=score_change
+            )
+            
+            action = "added" if added else "removed"
+            logger.debug(f"Reaction {action}: {reaction.emoji} on {message.author.display_name}'s image (score change: {score_change:+d})") 

@@ -204,3 +204,10 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+
+# Riko Bot Data Files
+leaderboard_data.json
+leaderboard_data.json.backup
+leaderboard_data.json.reset_backup_*
+leaderboard_data.json.migrated_backup
+migrate_to_mongo.py
