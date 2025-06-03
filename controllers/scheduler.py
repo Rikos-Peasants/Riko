@@ -19,12 +19,15 @@ class SchedulerController:
         """Start all scheduled tasks"""
         logger.info("Starting scheduled tasks...")
         
-        # Start weekly and monthly tasks
+        # Start weekly, monthly, and yearly tasks
         if not self.weekly_best_image.is_running():
             self.weekly_best_image.start()
         
         if not self.monthly_best_image.is_running():
             self.monthly_best_image.start()
+        
+        if not self.yearly_best_image.is_running():
+            self.yearly_best_image.start()
     
     def stop_tasks(self):
         """Stop all scheduled tasks"""
@@ -35,6 +38,9 @@ class SchedulerController:
         
         if self.monthly_best_image.is_running():
             self.monthly_best_image.cancel()
+        
+        if self.yearly_best_image.is_running():
+            self.yearly_best_image.cancel()
     
     @tasks.loop(hours=24)  # Check daily
     async def weekly_best_image(self):
@@ -75,6 +81,24 @@ class SchedulerController:
                 
         except Exception as e:
             logger.error(f"Error in monthly best image task: {e}")
+    
+    @tasks.loop(hours=24)  # Check daily
+    async def yearly_best_image(self):
+        """Post the best image of the year on the first day of January"""
+        try:
+            now = datetime.now()
+            # Check if it's the first day of January
+            if now.month == 1 and now.day == 1:
+                logger.info("Starting yearly best image selection...")
+                
+                # Get the date range for the past year
+                end_date = now
+                start_date = now.replace(year=now.year-1, month=1, day=1)
+                
+                await self._post_best_image("year", start_date, end_date)
+                
+        except Exception as e:
+            logger.error(f"Error in yearly best image task: {e}")
     
     async def _post_best_image(self, period: str, start_date: datetime, end_date: datetime):
         """Find and post the best image for the given period"""
@@ -180,6 +204,69 @@ class SchedulerController:
         
         return thumbs_up - thumbs_down
     
+    async def generate_leaderboard(self, guild: discord.Guild, start_date: datetime = None, end_date: datetime = None) -> List[Tuple[str, int, int, int]]:
+        """Generate leaderboard data for the specified period"""
+        user_stats = {}  # user_id: {'name': str, 'total_score': int, 'image_count': int}
+        
+        # Search through both image reaction channels
+        for channel_id in Config.IMAGE_REACTION_CHANNELS:
+            channel = guild.get_channel(channel_id)
+            if not channel:
+                logger.warning(f"Could not find channel {channel_id}")
+                continue
+            
+            logger.info(f"Analyzing images in #{channel.name} for leaderboard")
+            
+            try:
+                # Build message history query
+                history_kwargs = {}
+                if start_date:
+                    history_kwargs['after'] = start_date
+                if end_date:
+                    history_kwargs['before'] = end_date
+                history_kwargs['limit'] = None
+                
+                # Search through messages in the time period
+                async for message in channel.history(**history_kwargs):
+                    # Check if message has images
+                    if not await self._message_has_image(message):
+                        continue
+                    
+                    # Calculate net upvotes (thumbs up - thumbs down)
+                    net_score = await self._calculate_net_score(message)
+                    
+                    # Add to user stats
+                    user_id = message.author.id
+                    user_name = message.author.display_name
+                    
+                    if user_id not in user_stats:
+                        user_stats[user_id] = {
+                            'name': user_name,
+                            'total_score': 0,
+                            'image_count': 0
+                        }
+                    
+                    user_stats[user_id]['total_score'] += net_score
+                    user_stats[user_id]['image_count'] += 1
+            
+            except Exception as e:
+                logger.error(f"Error analyzing channel {channel.name}: {e}")
+        
+        # Convert to sorted list format: (user_name, user_id, total_score, image_count)
+        leaderboard = []
+        for user_id, stats in user_stats.items():
+            leaderboard.append((
+                stats['name'],
+                user_id,
+                stats['total_score'],
+                stats['image_count']
+            ))
+        
+        # Sort by total score (descending)
+        leaderboard.sort(key=lambda x: x[2], reverse=True)
+        
+        return leaderboard
+    
     @weekly_best_image.before_loop
     async def before_weekly_task(self):
         """Wait until the bot is ready before starting weekly task"""
@@ -188,4 +275,9 @@ class SchedulerController:
     @monthly_best_image.before_loop
     async def before_monthly_task(self):
         """Wait until the bot is ready before starting monthly task"""
+        await self.bot.wait_until_ready()
+    
+    @yearly_best_image.before_loop
+    async def before_yearly_task(self):
+        """Wait until the bot is ready before starting yearly task"""
         await self.bot.wait_until_ready() 

@@ -47,17 +47,17 @@ class EmbedViews:
             color = discord.Color.gold()
             trophy_emoji = "🥇"
             title = "Best Image of the Week!"
-        else:  # month
+        elif period == "month":
             color = discord.Color.purple()
             trophy_emoji = "👑"
             title = "Best Image of the Month!"
-        
-        # Check if the channel is NSFW
-        is_nsfw = message.channel.is_nsfw() if hasattr(message.channel, 'is_nsfw') else False
-        nsfw_warning = " 🔞" if is_nsfw else ""
+        else:  # year
+            color = discord.Color.red()
+            trophy_emoji = "🏆"
+            title = "Best Image of the Year!"
         
         embed = discord.Embed(
-            title=f"{trophy_emoji} {title}{nsfw_warning}",
+            title=f"{trophy_emoji} {title}",
             description=f"Congratulations to **{message.author.display_name}** for the most upvoted image!\n\n"
                        f"**Net Score:** {score} upvotes (👍 - 👎)\n"
                        f"**Channel:** #{message.channel.name}\n"
@@ -86,18 +86,8 @@ class EmbedViews:
                     break
         
         if image_url:
-            # Add spoiler to NSFW images by modifying the URL
-            if is_nsfw:
-                # For NSFW channels, we'll add a spoiler warning instead of the direct image
-                embed.add_field(
-                    name="🔞 NSFW Image (Click to View)",
-                    value=f"||[Click here to view the winning image]({image_url})||",
-                    inline=False
-                )
-                # Also set a spoiler thumbnail instead of full image
-                embed.set_thumbnail(url=image_url)
-            else:
-                embed.set_image(url=image_url)
+            # Display all images the same way (no NSFW spoilers)
+            embed.set_image(url=image_url)
         
         # Add original message link
         embed.add_field(
@@ -128,5 +118,48 @@ class EmbedViews:
         )
         
         embed.set_footer(text=f"Better luck next {period} in this channel!")
+        
+        return embed
+    
+    @staticmethod
+    def leaderboard_embed(leaderboard_data: list, period: str = "all time") -> discord.Embed:
+        """Create an embed for the leaderboard"""
+        embed = discord.Embed(
+            title=f"🏆 Image Leaderboard ({period.title()})",
+            description="Top users by total net upvotes on their images",
+            color=discord.Color.gold(),
+            timestamp=datetime.utcnow()
+        )
+        
+        if not leaderboard_data:
+            embed.add_field(
+                name="📭 No Data",
+                value="No images found for the specified period.",
+                inline=False
+            )
+            return embed
+        
+        # Add leaderboard entries
+        medal_emojis = ["🥇", "🥈", "🥉"]
+        
+        for i, (user_name, user_id, total_score, image_count) in enumerate(leaderboard_data[:10]):
+            position = i + 1
+            
+            # Use medal emojis for top 3, numbers for others
+            if position <= 3:
+                position_emoji = medal_emojis[position - 1]
+            else:
+                position_emoji = f"{position}."
+            
+            # Calculate average score
+            avg_score = total_score / image_count if image_count > 0 else 0
+            
+            embed.add_field(
+                name=f"{position_emoji} {user_name}",
+                value=f"**Total Score:** {total_score}\n**Images:** {image_count}\n**Avg:** {avg_score:.1f}",
+                inline=True
+            )
+        
+        embed.set_footer(text=f"📊 Based on net upvotes (👍 - 👎) • Showing top 10")
         
         return embed 

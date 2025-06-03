@@ -106,8 +106,91 @@ class CommandsController:
                 else:
                     await ctx.send(embed=error_embed)
         
+        @self.bot.hybrid_command(name="bestyear", description="Manually post the best image of this year (Bot owners only)")
+        @commands.is_owner()
+        async def best_year_command(ctx):
+            """Manually trigger best image of the year post"""
+            try:
+                # Check if this is a slash command (has defer) or text command
+                if hasattr(ctx, 'defer'):
+                    await ctx.defer()  # This might take a while
+                
+                # Get the date range for the current year
+                now = datetime.now()
+                end_date = now
+                start_date = now.replace(month=1, day=1)  # First day of current year
+                
+                # Use the scheduler controller to post the best image
+                await self.bot.scheduler_controller._post_best_image("year", start_date, end_date)
+                
+                # Send response based on command type
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send("✅ Best image of the year has been posted to each image channel!", ephemeral=True)
+                else:
+                    await ctx.send("✅ Best image of the year has been posted to each image channel!")
+                
+            except Exception as e:
+                error_embed = EmbedViews.error_embed(f"Failed to post best image: {str(e)}")
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(embed=error_embed, ephemeral=True)
+                else:
+                    await ctx.send(embed=error_embed)
+        
+        @self.bot.hybrid_command(name="leaderboard", description="Show the image upvote leaderboard")
+        async def leaderboard_command(ctx, period: str = "all"):
+            """Show leaderboard of users by image upvotes"""
+            try:
+                # Check if this is a slash command (has defer) or text command
+                if hasattr(ctx, 'defer'):
+                    await ctx.defer()  # This might take a while
+                
+                guild = ctx.guild
+                if not guild or guild.id != Config.GUILD_ID:
+                    error_msg = "This command can only be used in the configured guild."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Determine time period
+                start_date = None
+                end_date = datetime.now()
+                period_name = "all time"
+                
+                if period.lower() in ["week", "weekly"]:
+                    start_date = end_date - timedelta(days=7)
+                    period_name = "this week"
+                elif period.lower() in ["month", "monthly"]:
+                    start_date = end_date.replace(day=1)
+                    period_name = "this month"
+                elif period.lower() in ["year", "yearly"]:
+                    start_date = end_date.replace(month=1, day=1)
+                    period_name = "this year"
+                
+                # Generate leaderboard data
+                leaderboard_data = await self.bot.scheduler_controller.generate_leaderboard(guild, start_date, end_date)
+                
+                # Create and send embed
+                embed = EmbedViews.leaderboard_embed(leaderboard_data, period_name)
+                
+                # Send response based on command type
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(embed=embed)
+                else:
+                    await ctx.send(embed=embed)
+                
+            except Exception as e:
+                error_embed = EmbedViews.error_embed(f"Failed to generate leaderboard: {str(e)}")
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(embed=error_embed, ephemeral=True)
+                else:
+                    await ctx.send(embed=error_embed)
+        
         # Store references to prevent garbage collection
         self.debug_command = debug_command
         self.uptime_command = uptime_command
         self.best_week_command = best_week_command
-        self.best_month_command = best_month_command 
+        self.best_month_command = best_month_command
+        self.best_year_command = best_year_command
+        self.leaderboard_command = leaderboard_command 
