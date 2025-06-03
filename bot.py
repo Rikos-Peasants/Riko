@@ -6,6 +6,7 @@ import random
 from config import Config
 from controllers.commands import CommandsController
 from controllers.events import EventsController
+from controllers.scheduler import SchedulerController
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -29,6 +30,7 @@ class RikoBot(commands.Bot):
         # Initialize controllers
         self.commands_controller = CommandsController(self)
         self.events_controller = EventsController(self)
+        self.scheduler_controller = SchedulerController(self)
         
         # Funny status messages
         self.status_messages = [
@@ -105,6 +107,20 @@ class RikoBot(commands.Bot):
         # Start the status cycling task
         if not self.cycle_status.is_running():
             self.cycle_status.start()
+        
+        # Start scheduler tasks for best image posting
+        self.scheduler_controller.start_tasks()
+        logger.info("Started scheduled tasks for best image posting")
+        
+        # Log best image channel configuration
+        if Config.BEST_IMAGE_CHANNEL_ID:
+            best_channel = self.get_channel(Config.BEST_IMAGE_CHANNEL_ID)
+            if best_channel:
+                logger.info(f"Best images will be posted to #{best_channel.name}")
+            else:
+                logger.warning(f"Best image channel {Config.BEST_IMAGE_CHANNEL_ID} not found")
+        else:
+            logger.warning("BEST_IMAGE_CHANNEL_ID not configured - set it in config.py to enable best image posting")
     
     @tasks.loop(minutes=2)  # Change status every 2 minutes
     async def cycle_status(self):
@@ -140,6 +156,16 @@ class RikoBot(commands.Bot):
     async def before_cycle_status(self):
         """Wait until the bot is ready before starting status cycling"""
         await self.wait_until_ready()
+
+    async def close(self):
+        """Called when bot is shutting down"""
+        logger.info("Shutting down bot...")
+        
+        # Stop scheduler tasks
+        self.scheduler_controller.stop_tasks()
+        
+        # Call parent close
+        await super().close()
 
 async def main():
     """Main function to run the bot"""

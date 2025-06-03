@@ -16,6 +16,11 @@ class Config:
         1378693276206370969
     ]
     
+    # Best image posting configuration
+    # You can change this to the channel ID where you want the "best of" posts
+    # Example: BEST_IMAGE_CHANNEL_ID = 1234567890123456789
+    BEST_IMAGE_CHANNEL_ID = None  # Set this to your desired channel ID
+    
     @classmethod
     def validate(cls):
         """Validate that all required environment variables are set"""

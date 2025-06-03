@@ -40,5 +40,49 @@ class CommandsController:
                 error_embed = EmbedViews.error_embed(f"Failed to get uptime: {str(e)}")
                 await ctx.send(embed=error_embed, ephemeral=True)
         
-        # Store reference to prevent garbage collection
-        self.uptime_command = uptime_command 
+        @self.bot.hybrid_command(name="bestweek", description="Manually post the best image of this week (Bot owners only)")
+        @commands.is_owner()
+        async def best_week_command(ctx):
+            """Manually trigger best image of the week post"""
+            try:
+                await ctx.defer()  # This might take a while
+                
+                # Get the date range for the past week
+                now = datetime.now()
+                end_date = now
+                start_date = now - timedelta(days=7)
+                
+                # Use the scheduler controller to post the best image
+                await self.bot.scheduler_controller._post_best_image("week", start_date, end_date)
+                
+                await ctx.followup.send("✅ Best image of the week has been posted!", ephemeral=True)
+                
+            except Exception as e:
+                error_embed = EmbedViews.error_embed(f"Failed to post best image: {str(e)}")
+                await ctx.followup.send(embed=error_embed, ephemeral=True)
+        
+        @self.bot.hybrid_command(name="bestmonth", description="Manually post the best image of this month (Bot owners only)")
+        @commands.is_owner()
+        async def best_month_command(ctx):
+            """Manually trigger best image of the month post"""
+            try:
+                await ctx.defer()  # This might take a while
+                
+                # Get the date range for the past month
+                now = datetime.now()
+                end_date = now
+                start_date = now.replace(day=1)  # First day of current month
+                
+                # Use the scheduler controller to post the best image
+                await self.bot.scheduler_controller._post_best_image("month", start_date, end_date)
+                
+                await ctx.followup.send("✅ Best image of the month has been posted!", ephemeral=True)
+                
+            except Exception as e:
+                error_embed = EmbedViews.error_embed(f"Failed to post best image: {str(e)}")
+                await ctx.followup.send(embed=error_embed, ephemeral=True)
+        
+        # Store references to prevent garbage collection
+        self.uptime_command = uptime_command
+        self.best_week_command = best_week_command
+        self.best_month_command = best_month_command 
