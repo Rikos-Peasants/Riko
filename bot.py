@@ -61,8 +61,15 @@ class RikoBot(commands.Bot):
         logger.info("Setting up bot...")
         
         # Register commands and events FIRST
+        logger.info("Registering commands...")
         self.commands_controller.register_commands()
+        logger.info("Registering events...")
         self.events_controller.register_events()
+        
+        # Debug: List all registered text commands
+        logger.info(f"Text commands registered: {len(self.commands)}")
+        for cmd in self.commands:
+            logger.info(f"  - Text command: R!{cmd.name}")
         
         # Wait for registration to complete
         await asyncio.sleep(0.5)
@@ -70,6 +77,10 @@ class RikoBot(commands.Bot):
         # Show registered commands for debugging
         logger.info(f"Registered {len(self.tree.get_commands())} app commands globally")
         logger.info(f"Registered {len(self.tree.get_commands(guild=discord.Object(id=Config.GUILD_ID)))} app commands for guild")
+        
+        # Debug: List all app commands
+        for cmd in self.tree.get_commands():
+            logger.info(f"  - App command: /{cmd.name} - {cmd.description}")
         
         # Sync commands to enable slash command functionality
         logger.info("Syncing hybrid commands...")
@@ -111,16 +122,7 @@ class RikoBot(commands.Bot):
         # Start scheduler tasks for best image posting
         self.scheduler_controller.start_tasks()
         logger.info("Started scheduled tasks for best image posting")
-        
-        # Log best image channel configuration
-        if Config.BEST_IMAGE_CHANNEL_ID:
-            best_channel = self.get_channel(Config.BEST_IMAGE_CHANNEL_ID)
-            if best_channel:
-                logger.info(f"Best images will be posted to #{best_channel.name}")
-            else:
-                logger.warning(f"Best image channel {Config.BEST_IMAGE_CHANNEL_ID} not found")
-        else:
-            logger.warning("BEST_IMAGE_CHANNEL_ID not configured - set it in config.py to enable best image posting")
+        logger.info("Best images will be posted back to their original channels")
     
     @tasks.loop(minutes=2)  # Change status every 2 minutes
     async def cycle_status(self):

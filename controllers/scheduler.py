@@ -79,75 +79,77 @@ class SchedulerController:
     async def _post_best_image(self, period: str, start_date: datetime, end_date: datetime):
         """Find and post the best image for the given period"""
         try:
-            # Check if best image channel is configured
-            if not Config.BEST_IMAGE_CHANNEL_ID:
-                logger.warning(f"BEST_IMAGE_CHANNEL_ID not configured, skipping {period}ly best image post")
-                return
-            
             guild = self.bot.get_guild(Config.GUILD_ID)
             if not guild:
                 logger.error(f"Could not find guild {Config.GUILD_ID}")
                 return
             
-            best_image_channel = guild.get_channel(Config.BEST_IMAGE_CHANNEL_ID)
-            if not best_image_channel:
-                logger.error(f"Could not find best image channel {Config.BEST_IMAGE_CHANNEL_ID}")
-                return
-            
-            # Find the best image from both channels
-            best_message, best_score = await self._find_best_image_in_period(guild, start_date, end_date)
-            
-            if not best_message:
-                logger.info(f"No images found for {period}ly best image")
-                # Post a "no winner" message
-                embed = EmbedViews.no_winner_embed(period)
-                await best_image_channel.send(embed=embed)
-                return
-            
-            # Create and post the winning image embed
-            embed = await EmbedViews.best_image_embed(best_message, period, best_score)
-            await best_image_channel.send(embed=embed)
-            
-            logger.info(f"Posted {period}ly best image by {best_message.author.display_name} with {best_score} net upvotes")
-            
+            # Find the best image from each channel separately
+            for channel_id in Config.IMAGE_REACTION_CHANNELS:
+                channel = guild.get_channel(channel_id)
+                if not channel:
+                    logger.warning(f"Could not find channel {channel_id}")
+                    continue
+                
+                logger.info(f"Finding best image in #{channel.name} for {period}")
+                
+                # Find the best image in this specific channel
+                best_message, best_score = await self._find_best_image_in_channel(channel, start_date, end_date)
+                
+                if not best_message:
+                    logger.info(f"No images found for {period}ly best image in #{channel.name}")
+                    # Post a "no winner" message in this channel
+                    embed = EmbedViews.no_winner_embed(period)
+                    embed.add_field(
+                        name="📍 Channel",
+                        value=f"#{channel.name}",
+                        inline=False
+                    )
+                    await channel.send(embed=embed)
+                    continue
+                
+                # Create and post the winning image embed in the original channel
+                embed = await EmbedViews.best_image_embed(best_message, period, best_score)
+                embed.add_field(
+                    name="🏆 Winner in this Channel",
+                    value=f"Most upvoted image in #{channel.name}",
+                    inline=False
+                )
+                await channel.send(embed=embed)
+                
+                logger.info(f"Posted {period}ly best image in #{channel.name} by {best_message.author.display_name} with {best_score} net upvotes")
+                
         except Exception as e:
             logger.error(f"Error posting {period}ly best image: {e}")
     
-    async def _find_best_image_in_period(self, guild: discord.Guild, start_date: datetime, end_date: datetime) -> Tuple[Optional[discord.Message], int]:
-        """Find the image with the highest net upvotes in the given period"""
+    async def _find_best_image_in_channel(self, channel: discord.TextChannel, start_date: datetime, end_date: datetime) -> Tuple[Optional[discord.Message], int]:
+        """Find the image with the highest net upvotes in a specific channel"""
         best_message = None
         best_score = -1
         
-        # Search through both image reaction channels
-        for channel_id in Config.IMAGE_REACTION_CHANNELS:
-            channel = guild.get_channel(channel_id)
-            if not channel:
-                logger.warning(f"Could not find channel {channel_id}")
-                continue
-            
-            logger.info(f"Searching for best images in #{channel.name}")
-            
-            try:
-                # Search through messages in the time period
-                async for message in channel.history(
-                    after=start_date,
-                    before=end_date,
-                    limit=None
-                ):
-                    # Check if message has images
-                    if not await self._message_has_image(message):
-                        continue
-                    
-                    # Calculate net upvotes (thumbs up - thumbs down)
-                    net_score = await self._calculate_net_score(message)
-                    
-                    if net_score > best_score:
-                        best_score = net_score
-                        best_message = message
-                        logger.info(f"New best image found: {net_score} net upvotes by {message.author.display_name}")
-            
-            except Exception as e:
-                logger.error(f"Error searching in channel {channel.name}: {e}")
+        logger.info(f"Searching for best images in #{channel.name}")
+        
+        try:
+            # Search through messages in the time period
+            async for message in channel.history(
+                after=start_date,
+                before=end_date,
+                limit=None
+            ):
+                # Check if message has images
+                if not await self._message_has_image(message):
+                    continue
+                
+                # Calculate net upvotes (thumbs up - thumbs down)
+                net_score = await self._calculate_net_score(message)
+                
+                if net_score > best_score:
+                    best_score = net_score
+                    best_message = message
+                    logger.info(f"New best image found in #{channel.name}: {net_score} net upvotes by {message.author.display_name}")
+        
+        except Exception as e:
+            logger.error(f"Error searching in channel {channel.name}: {e}")
         
         return best_message, best_score
     

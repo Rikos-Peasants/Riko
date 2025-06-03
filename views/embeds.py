@@ -52,8 +52,12 @@ class EmbedViews:
             trophy_emoji = "👑"
             title = "Best Image of the Month!"
         
+        # Check if the channel is NSFW
+        is_nsfw = message.channel.is_nsfw() if hasattr(message.channel, 'is_nsfw') else False
+        nsfw_warning = " 🔞" if is_nsfw else ""
+        
         embed = discord.Embed(
-            title=f"{trophy_emoji} {title}",
+            title=f"{trophy_emoji} {title}{nsfw_warning}",
             description=f"Congratulations to **{message.author.display_name}** for the most upvoted image!\n\n"
                        f"**Net Score:** {score} upvotes (👍 - 👎)\n"
                        f"**Channel:** #{message.channel.name}\n"
@@ -82,7 +86,18 @@ class EmbedViews:
                     break
         
         if image_url:
-            embed.set_image(url=image_url)
+            # Add spoiler to NSFW images by modifying the URL
+            if is_nsfw:
+                # For NSFW channels, we'll add a spoiler warning instead of the direct image
+                embed.add_field(
+                    name="🔞 NSFW Image (Click to View)",
+                    value=f"||[Click here to view the winning image]({image_url})||",
+                    inline=False
+                )
+                # Also set a spoiler thumbnail instead of full image
+                embed.set_thumbnail(url=image_url)
+            else:
+                embed.set_image(url=image_url)
         
         # Add original message link
         embed.add_field(
@@ -106,12 +121,12 @@ class EmbedViews:
         """Create an embed when no images are found for the period"""
         embed = discord.Embed(
             title=f"📭 No Best Image of the {period.title()}",
-            description=f"No images were posted in the image channels during the past {period}.\n\n"
-                       f"Keep sharing your amazing images for a chance to win next {period}!",
+            description=f"No images were posted in this channel during the past {period}.\n\n"
+                       f"Keep sharing your amazing images here for a chance to win next {period}!",
             color=discord.Color.light_grey(),
             timestamp=datetime.utcnow()
         )
         
-        embed.set_footer(text=f"Better luck next {period}!")
+        embed.set_footer(text=f"Better luck next {period} in this channel!")
         
         return embed 

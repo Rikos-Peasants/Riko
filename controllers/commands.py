@@ -14,6 +14,12 @@ class CommandsController:
     def register_commands(self):
         """Register all hybrid commands (both text and slash)"""
         
+        # Add a simple debug command for testing
+        @self.bot.command(name="debug")
+        async def debug_command(ctx):
+            """Simple debug command to test text commands"""
+            await ctx.send("🔧 Debug: Text commands are working!")
+        
         # Define the hybrid command
         @self.bot.hybrid_command(name="uptime", description="Check how long the bot has been running")
         async def uptime_command(ctx):
@@ -45,7 +51,9 @@ class CommandsController:
         async def best_week_command(ctx):
             """Manually trigger best image of the week post"""
             try:
-                await ctx.defer()  # This might take a while
+                # Check if this is a slash command (has defer) or text command
+                if hasattr(ctx, 'defer'):
+                    await ctx.defer()  # This might take a while
                 
                 # Get the date range for the past week
                 now = datetime.now()
@@ -55,18 +63,27 @@ class CommandsController:
                 # Use the scheduler controller to post the best image
                 await self.bot.scheduler_controller._post_best_image("week", start_date, end_date)
                 
-                await ctx.followup.send("✅ Best image of the week has been posted!", ephemeral=True)
+                # Send response based on command type
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send("✅ Best image of the week has been posted to each image channel!", ephemeral=True)
+                else:
+                    await ctx.send("✅ Best image of the week has been posted to each image channel!")
                 
             except Exception as e:
                 error_embed = EmbedViews.error_embed(f"Failed to post best image: {str(e)}")
-                await ctx.followup.send(embed=error_embed, ephemeral=True)
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(embed=error_embed, ephemeral=True)
+                else:
+                    await ctx.send(embed=error_embed)
         
         @self.bot.hybrid_command(name="bestmonth", description="Manually post the best image of this month (Bot owners only)")
         @commands.is_owner()
         async def best_month_command(ctx):
             """Manually trigger best image of the month post"""
             try:
-                await ctx.defer()  # This might take a while
+                # Check if this is a slash command (has defer) or text command
+                if hasattr(ctx, 'defer'):
+                    await ctx.defer()  # This might take a while
                 
                 # Get the date range for the past month
                 now = datetime.now()
@@ -76,13 +93,21 @@ class CommandsController:
                 # Use the scheduler controller to post the best image
                 await self.bot.scheduler_controller._post_best_image("month", start_date, end_date)
                 
-                await ctx.followup.send("✅ Best image of the month has been posted!", ephemeral=True)
+                # Send response based on command type
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send("✅ Best image of the month has been posted to each image channel!", ephemeral=True)
+                else:
+                    await ctx.send("✅ Best image of the month has been posted to each image channel!")
                 
             except Exception as e:
                 error_embed = EmbedViews.error_embed(f"Failed to post best image: {str(e)}")
-                await ctx.followup.send(embed=error_embed, ephemeral=True)
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(embed=error_embed, ephemeral=True)
+                else:
+                    await ctx.send(embed=error_embed)
         
         # Store references to prevent garbage collection
+        self.debug_command = debug_command
         self.uptime_command = uptime_command
         self.best_week_command = best_week_command
         self.best_month_command = best_month_command 

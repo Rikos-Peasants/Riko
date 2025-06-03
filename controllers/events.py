@@ -23,6 +23,15 @@ class EventsController:
         @self.bot.event
         async def on_message(message: discord.Message):
             await self._handle_message(message)
+        
+        @self.bot.event
+        async def on_command_error(ctx: commands.Context, error: commands.CommandError):
+            await self._handle_command_error(ctx, error)
+        
+        @self.bot.event
+        async def on_command(ctx: commands.Context):
+            """Log when commands are successfully invoked"""
+            logger.info(f"Command '{ctx.command.name}' invoked by {ctx.author.display_name} in #{ctx.channel.name}")
     
     async def _handle_member_update(self, before: discord.Member, after: discord.Member):
         """Handle member role updates"""
@@ -62,6 +71,13 @@ class EventsController:
         if message.author.bot:
             return
         
+        # Log message if it starts with command prefix
+        if message.content.startswith('R!'):
+            logger.info(f"Received command: {message.content} from {message.author.display_name}")
+        
+        # IMPORTANT: Process commands first for text commands to work
+        await self.bot.process_commands(message)
+        
         # Only process messages from the configured guild
         if not message.guild or message.guild.id != Config.GUILD_ID:
             return
@@ -95,4 +111,19 @@ class EventsController:
             except discord.Forbidden:
                 logger.error(f"Missing permission to add reactions in {message.channel.name}")
             except Exception as e:
-                logger.error(f"Error adding reactions to message: {e}") 
+                logger.error(f"Error adding reactions to message: {e}")
+    
+    async def _handle_command_error(self, ctx: commands.Context, error: commands.CommandError):
+        """Handle command errors"""
+        if isinstance(error, commands.CommandNotFound):
+            logger.debug(f"Unknown command: {ctx.invoked_with}")
+            return
+        elif isinstance(error, commands.MissingPermissions):
+            logger.warning(f"Missing permissions for command {ctx.command.name}: {error}")
+            await ctx.send("❌ You don't have permission to use this command.", ephemeral=True)
+        elif isinstance(error, commands.NotOwner):
+            logger.warning(f"Non-owner tried to use owner command {ctx.command.name}: {ctx.author}")
+            await ctx.send("❌ This command is only available to bot owners.", ephemeral=True)
+        else:
+            logger.error(f"Command error in {ctx.command.name}: {error}")
+            await ctx.send(f"❌ An error occurred: {str(error)}", ephemeral=True) 
