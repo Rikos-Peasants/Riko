@@ -25,6 +25,10 @@ class EventsController:
             await self._handle_message(message)
         
         @self.bot.event
+        async def on_message_delete(message: discord.Message):
+            await self._handle_message_delete(message)
+        
+        @self.bot.event
         async def on_command_error(ctx: commands.Context, error: commands.CommandError):
             await self._handle_command_error(ctx, error)
         
@@ -71,7 +75,7 @@ class EventsController:
                     # Bot doesn't have permission to remove roles
                     print(f"Failed to remove role from {after.display_name}: Missing permissions")
                 except Exception as e:
-                    print(f"Error handling role update for {after.display_name}: {e}") 
+                    print(f"Error handling role update for {after.display_name}: {e}")
     
     async def _handle_message(self, message: discord.Message):
         """Handle new messages for image reactions"""
@@ -96,26 +100,40 @@ class EventsController:
         
         # Check if message has images
         has_image = False
+        image_url = None
         
         # Check for attachments (uploaded images)
         for attachment in message.attachments:
             if any(attachment.filename.lower().endswith(ext) for ext in ['.png', '.jpg', '.jpeg', '.gif', '.webp']):
                 has_image = True
+                image_url = attachment.url
                 break
         
         # Check for embedded images (links)
         if not has_image:
             for embed in message.embeds:
-                if embed.image or embed.thumbnail:
+                if embed.image:
                     has_image = True
+                    image_url = embed.image.url
+                    break
+                elif embed.thumbnail:
+                    has_image = True
+                    image_url = embed.thumbnail.url
                     break
         
         # React with thumbs up and thumbs down if image found
-        if has_image:
+        if has_image and image_url:
             try:
                 await message.add_reaction('👍')
                 await message.add_reaction('👎')
                 logger.info(f"Added reactions to image in {message.channel.name} by {message.author.display_name}")
+                
+                # Store the image message in MongoDB
+                await self.bot.leaderboard_manager.store_image_message(
+                    message=message,
+                    image_url=image_url,
+                    initial_score=0
+                )
                 
                 # Track the image post in leaderboard
                 self.bot.leaderboard_manager.add_image_post(
@@ -128,6 +146,18 @@ class EventsController:
                 logger.error(f"Missing permission to add reactions in {message.channel.name}")
             except Exception as e:
                 logger.error(f"Error adding reactions to message: {e}")
+    
+    async def _handle_message_delete(self, message: discord.Message):
+        """Handle message deletions to clean up image tracking"""
+        # Only process messages from image channels
+        if not message.guild or message.guild.id != Config.GUILD_ID:
+            return
+            
+        if message.channel.id not in Config.IMAGE_REACTION_CHANNELS:
+            return
+            
+        # Delete the image message from MongoDB if it exists
+        await self.bot.leaderboard_manager.delete_image_message(str(message.id))
     
     async def _handle_command_error(self, ctx: commands.Context, error: commands.CommandError):
         """Handle command errors"""
@@ -142,7 +172,7 @@ class EventsController:
             await ctx.send("❌ This command is only available to bot owners.", ephemeral=True)
         else:
             logger.error(f"Command error in {ctx.command.name}: {error}")
-            await ctx.send(f"❌ An error occurred: {str(error)}", ephemeral=True) 
+            await ctx.send(f"❌ An error occurred: {str(error)}", ephemeral=True)
     
     async def _handle_reaction_change(self, reaction: discord.Reaction, user: discord.User, added: bool):
         """Handle reaction additions and removals for leaderboard tracking"""
@@ -197,6 +227,16 @@ class EventsController:
                 user_id=message.author.id,
                 user_name=message.author.display_name,
                 score_change=score_change
+            )
+            
+            # Update the image message score in MongoDB
+            thumbs_up = sum(1 for r in message.reactions if str(r.emoji) == '👍')
+            thumbs_down = sum(1 for r in message.reactions if str(r.emoji) == '👎')
+            
+            await self.bot.leaderboard_manager.update_image_message_score(
+                message_id=str(message.id),
+                thumbs_up=thumbs_up,
+                thumbs_down=thumbs_down
             )
             
             action = "added" if added else "removed"

@@ -117,10 +117,14 @@ class SchedulerController:
                 
                 logger.info(f"Finding best image in #{channel.name} for {period}")
                 
-                # Find the best image in this specific channel
-                best_message, best_score = await self._find_best_image_in_channel(channel, start_date, end_date)
+                # Get the best image from MongoDB
+                best_image = await self.bot.leaderboard_manager.get_best_image(
+                    channel_id=str(channel_id),
+                    start_date=start_date,
+                    end_date=end_date
+                )
                 
-                if not best_message:
+                if not best_image:
                     logger.info(f"No images found for {period}ly best image in #{channel.name}")
                     # Post a "no winner" message in this channel
                     embed = EmbedViews.no_winner_embed(period)
@@ -132,140 +136,61 @@ class SchedulerController:
                     await channel.send(embed=embed)
                     continue
                 
-                # Create and post the winning image embed in the original channel
-                embed = await EmbedViews.best_image_embed(best_message, period, best_score)
+                # Create custom message object for the embed
+                class ImageMessage:
+                    def __init__(self, data):
+                        self.id = int(data['message_id'])
+                        self.channel = channel
+                        self.author = None  # Will be set below
+                        self.created_at = data['created_at']
+                        self.jump_url = data['jump_url']
+                        self.attachments = []
+                        self.embeds = []
+                
+                # Create message object
+                message = ImageMessage(best_image)
+                
+                # Get the author
+                try:
+                    message.author = await self.bot.fetch_user(int(best_image['author_id']))
+                except:
+                    # If user not found, create a dummy user
+                    class DummyUser:
+                        def __init__(self, name):
+                            self.display_name = name
+                            self.display_avatar = None
+                    message.author = DummyUser(best_image['author_name'])
+                
+                # Create and post the winning image embed
+                embed = await EmbedViews.best_image_embed(message, period, best_image['score'])
+                
+                # Add the image URL from our database
+                embed.set_image(url=best_image['image_url'])
+                
                 embed.add_field(
                     name="🏆 Winner in this Channel",
                     value=f"Most upvoted image in #{channel.name}",
                     inline=False
                 )
+                
+                # Add reaction counts
+                embed.add_field(
+                    name="👍 Upvotes",
+                    value=str(best_image['thumbs_up']),
+                    inline=True
+                )
+                embed.add_field(
+                    name="👎 Downvotes",
+                    value=str(best_image['thumbs_down']),
+                    inline=True
+                )
+                
                 await channel.send(embed=embed)
                 
-                logger.info(f"Posted {period}ly best image in #{channel.name} by {best_message.author.display_name} with {best_score} net upvotes")
+                logger.info(f"Posted {period}ly best image in #{channel.name} by {best_image['author_name']} with {best_image['score']} net upvotes")
                 
         except Exception as e:
             logger.error(f"Error posting {period}ly best image: {e}")
-    
-    async def _find_best_image_in_channel(self, channel: discord.TextChannel, start_date: datetime, end_date: datetime) -> Tuple[Optional[discord.Message], int]:
-        """Find the image with the highest net upvotes in a specific channel"""
-        best_message = None
-        best_score = -1
-        
-        logger.info(f"Searching for best images in #{channel.name}")
-        
-        try:
-            # Search through messages in the time period
-            async for message in channel.history(
-                after=start_date,
-                before=end_date,
-                limit=None
-            ):
-                # Check if message has images
-                if not await self._message_has_image(message):
-                    continue
-                
-                # Calculate net upvotes (thumbs up - thumbs down)
-                net_score = await self._calculate_net_score(message)
-                
-                if net_score > best_score:
-                    best_score = net_score
-                    best_message = message
-                    logger.info(f"New best image found in #{channel.name}: {net_score} net upvotes by {message.author.display_name}")
-        
-        except Exception as e:
-            logger.error(f"Error searching in channel {channel.name}: {e}")
-        
-        return best_message, best_score
-    
-    async def _message_has_image(self, message: discord.Message) -> bool:
-        """Check if a message contains an image"""
-        # Check for attachments (uploaded images)
-        for attachment in message.attachments:
-            if any(attachment.filename.lower().endswith(ext) for ext in ['.png', '.jpg', '.jpeg', '.gif', '.webp']):
-                return True
-        
-        # Check for embedded images (links)
-        for embed in message.embeds:
-            if embed.image or embed.thumbnail:
-                return True
-        
-        return False
-    
-    async def _calculate_net_score(self, message: discord.Message) -> int:
-        """Calculate net score (thumbs up - thumbs down) for a message"""
-        thumbs_up = 0
-        thumbs_down = 0
-        
-        for reaction in message.reactions:
-            if str(reaction.emoji) == '👍':
-                thumbs_up = reaction.count
-            elif str(reaction.emoji) == '👎':
-                thumbs_down = reaction.count
-        
-        return thumbs_up - thumbs_down
-    
-    async def generate_leaderboard(self, guild: discord.Guild, start_date: datetime = None, end_date: datetime = None) -> List[Tuple[str, int, int, int]]:
-        """Generate leaderboard data for the specified period"""
-        user_stats = {}  # user_id: {'name': str, 'total_score': int, 'image_count': int}
-        
-        # Search through both image reaction channels
-        for channel_id in Config.IMAGE_REACTION_CHANNELS:
-            channel = guild.get_channel(channel_id)
-            if not channel:
-                logger.warning(f"Could not find channel {channel_id}")
-                continue
-            
-            logger.info(f"Analyzing images in #{channel.name} for leaderboard")
-            
-            try:
-                # Build message history query
-                history_kwargs = {}
-                if start_date:
-                    history_kwargs['after'] = start_date
-                if end_date:
-                    history_kwargs['before'] = end_date
-                history_kwargs['limit'] = None
-                
-                # Search through messages in the time period
-                async for message in channel.history(**history_kwargs):
-                    # Check if message has images
-                    if not await self._message_has_image(message):
-                        continue
-                    
-                    # Calculate net upvotes (thumbs up - thumbs down)
-                    net_score = await self._calculate_net_score(message)
-                    
-                    # Add to user stats
-                    user_id = message.author.id
-                    user_name = message.author.display_name
-                    
-                    if user_id not in user_stats:
-                        user_stats[user_id] = {
-                            'name': user_name,
-                            'total_score': 0,
-                            'image_count': 0
-                        }
-                    
-                    user_stats[user_id]['total_score'] += net_score
-                    user_stats[user_id]['image_count'] += 1
-            
-            except Exception as e:
-                logger.error(f"Error analyzing channel {channel.name}: {e}")
-        
-        # Convert to sorted list format: (user_name, user_id, total_score, image_count)
-        leaderboard = []
-        for user_id, stats in user_stats.items():
-            leaderboard.append((
-                stats['name'],
-                user_id,
-                stats['total_score'],
-                stats['image_count']
-            ))
-        
-        # Sort by total score (descending)
-        leaderboard.sort(key=lambda x: x[2], reverse=True)
-        
-        return leaderboard
     
     @weekly_best_image.before_loop
     async def before_weekly_task(self):

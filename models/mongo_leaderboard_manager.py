@@ -20,6 +20,7 @@ class MongoLeaderboardManager:
         self.client = None
         self.db = None
         self.collection = None
+        self.images_collection = None  # New collection for storing image messages
         self._connect()
     
     def _connect(self):
@@ -30,16 +31,113 @@ class MongoLeaderboardManager:
             self.client.admin.command('ismaster')
             self.db = self.client[self.database_name]
             self.collection = self.db[self.collection_name]
+            self.images_collection = self.db['image_messages']  # New collection
             
             # Create indexes for better performance
             self.collection.create_index("user_id", unique=True)
             self.collection.create_index([("total_score", DESCENDING)])
             
-            logger.info(f"Connected to MongoDB database '{self.database_name}', collection '{self.collection_name}'")
+            # Create indexes for image messages
+            self.images_collection.create_index([("message_id", 1)], unique=True)
+            self.images_collection.create_index([("channel_id", 1), ("created_at", -1)])
+            self.images_collection.create_index([("score", -1)])
+            
+            logger.info(f"Connected to MongoDB database '{self.database_name}', collections: {self.collection_name}, image_messages")
             
         except (ConnectionFailure, ServerSelectionTimeoutError) as e:
             logger.error(f"Failed to connect to MongoDB: {e}")
             raise Exception(f"MongoDB connection failed: {e}")
+
+    async def store_image_message(self, message, image_url: str, initial_score: int = 0):
+        """Store an image message in the database"""
+        try:
+            # Create document for the image message
+            doc = {
+                "message_id": str(message.id),
+                "channel_id": str(message.channel.id),
+                "author_id": str(message.author.id),
+                "author_name": message.author.display_name,
+                "content": message.content,
+                "image_url": image_url,
+                "score": initial_score,
+                "thumbs_up": 0,
+                "thumbs_down": 0,
+                "created_at": message.created_at,
+                "jump_url": message.jump_url
+            }
+            
+            # Use upsert to handle potential duplicates
+            result = self.images_collection.update_one(
+                {"message_id": doc["message_id"]},
+                {"$set": doc},
+                upsert=True
+            )
+            
+            logger.info(f"Stored image message from {message.author.display_name} in #{message.channel.name}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error storing image message: {e}")
+            return False
+
+    async def update_image_message_score(self, message_id: str, thumbs_up: int, thumbs_down: int):
+        """Update the score for an image message"""
+        try:
+            net_score = thumbs_up - thumbs_down
+            result = self.images_collection.update_one(
+                {"message_id": str(message_id)},
+                {
+                    "$set": {
+                        "score": net_score,
+                        "thumbs_up": thumbs_up,
+                        "thumbs_down": thumbs_down,
+                        "last_updated": datetime.now()
+                    }
+                }
+            )
+            
+            if result.modified_count > 0:
+                logger.debug(f"Updated score for message {message_id}: {net_score} (👍{thumbs_up} - 👎{thumbs_down})")
+                return True
+            return False
+            
+        except Exception as e:
+            logger.error(f"Error updating image message score: {e}")
+            return False
+
+    async def get_best_image(self, channel_id: str, start_date: datetime, end_date: datetime) -> Optional[Dict]:
+        """Get the best image in a channel for a given time period"""
+        try:
+            # Query for the highest scored image in the time period
+            result = self.images_collection.find_one(
+                {
+                    "channel_id": str(channel_id),
+                    "created_at": {
+                        "$gte": start_date,
+                        "$lt": end_date
+                    }
+                },
+                sort=[("score", DESCENDING)]
+            )
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error getting best image: {e}")
+            return None
+
+    async def delete_image_message(self, message_id: str):
+        """Delete an image message from the database"""
+        try:
+            result = self.images_collection.delete_one({"message_id": str(message_id)})
+            if result.deleted_count > 0:
+                logger.info(f"Deleted image message {message_id}")
+                return True
+            return False
+            
+        except Exception as e:
+            logger.error(f"Error deleting image message: {e}")
+            return False
     
     def add_image_post(self, user_id: int, user_name: str, initial_score: int = 0):
         """Record when a user posts an image"""
