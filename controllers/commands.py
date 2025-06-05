@@ -82,6 +82,7 @@ class CommandsController:
                 # Process images from the past year
                 one_year_ago = datetime.now() - timedelta(days=365)
                 total_processed = 0
+                total_skipped = 0
                 total_users = set()
                 
                 # Get bot user ID to exclude bot reactions
@@ -136,6 +137,31 @@ class CommandsController:
                                         break
                             
                             if has_image:
+                                # Check if this message is already processed to avoid duplicates
+                                if await self.bot.leaderboard_manager.image_message_exists(str(message.id)):
+                                    print(f"   ⏭️ Skipping already processed image from {message.author.display_name}")
+                                    total_skipped += 1
+                                    continue
+                                
+                                # Extract image URL for database storage
+                                image_url = None
+                                
+                                # Check for attachments (uploaded images)
+                                for attachment in message.attachments:
+                                    if any(attachment.filename.lower().endswith(ext) for ext in ['.png', '.jpg', '.jpeg', '.gif', '.webp']):
+                                        image_url = attachment.url
+                                        break
+                                
+                                # Check for embedded images (links) if no attachment found
+                                if not image_url:
+                                    for embed in message.embeds:
+                                        if embed.image:
+                                            image_url = embed.image.url
+                                            break
+                                        elif embed.thumbnail:
+                                            image_url = embed.thumbnail.url
+                                            break
+                                
                                 # Calculate current score
                                 thumbs_up = 0
                                 thumbs_down = 0
@@ -157,6 +183,21 @@ class CommandsController:
                                                 break
                                 
                                 net_score = thumbs_up - thumbs_down
+                                
+                                # Store the image message in MongoDB database
+                                if image_url:
+                                    await self.bot.leaderboard_manager.store_image_message(
+                                        message=message,
+                                        image_url=image_url,
+                                        initial_score=net_score
+                                    )
+                                    
+                                    # Update the image message score with current reactions
+                                    await self.bot.leaderboard_manager.update_image_message_score(
+                                        message_id=str(message.id),
+                                        thumbs_up=thumbs_up,
+                                        thumbs_down=thumbs_down
+                                    )
                                 
                                 # Add to leaderboard (this will create or update the user)
                                 self.bot.leaderboard_manager.add_image_post(
@@ -182,14 +223,16 @@ class CommandsController:
                 completion_msg = f"✅ **Processing Complete!**\n\n"
                 completion_msg += f"📊 **Results:**\n"
                 completion_msg += f"• **Images Processed:** {total_processed}\n"
+                completion_msg += f"• **Images Skipped:** {total_skipped} (already in database)\n"
                 completion_msg += f"• **Unique Users:** {len(total_users)}\n"
                 completion_msg += f"• **Channels:** {len(Config.IMAGE_REACTION_CHANNELS)}\n"
                 completion_msg += f"• **Time Period:** Past 365 days\n\n"
                 
                 if total_processed > 0:
-                    completion_msg += f"🏆 Use `R!leaderboard` or `/leaderboard` to see the updated rankings!"
+                    completion_msg += f"🏆 Use `R!leaderboard` or `/leaderboard` to see the updated rankings!\n"
+                    completion_msg += f"💾 All processed images have been stored in the database for best image tracking."
                 else:
-                    completion_msg += f"⚠️ No images found in the specified time period."
+                    completion_msg += f"⚠️ No new images found in the specified time period."
                 
                 if hasattr(ctx, 'followup'):
                     await ctx.followup.send(completion_msg)

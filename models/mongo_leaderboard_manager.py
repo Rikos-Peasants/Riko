@@ -48,6 +48,15 @@ class MongoLeaderboardManager:
             logger.error(f"Failed to connect to MongoDB: {e}")
             raise Exception(f"MongoDB connection failed: {e}")
 
+    async def image_message_exists(self, message_id: str) -> bool:
+        """Check if an image message already exists in the database"""
+        try:
+            result = self.images_collection.find_one({"message_id": str(message_id)})
+            return result is not None
+        except Exception as e:
+            logger.error(f"Error checking if image message exists: {e}")
+            return False
+
     async def store_image_message(self, message, image_url: str, initial_score: int = 0):
         """Store an image message in the database"""
         try:
