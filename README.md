@@ -129,6 +129,7 @@ All commands support both text and slash formats:
 - **Net Scoring**: Score = 👍 votes - 👎 votes
 - **Leaderboard**: Users ranked by total net score across all images
 - **Best Image Posts**: Automatic weekly (Sunday), monthly (1st), yearly (Jan 1st) posts
+- **Chat Reminder**: Automatically reminds users to move conversations to chat channels when 10 consecutive text messages are detected in image channels
 
 ## Project Structure
 

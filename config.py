@@ -21,6 +21,12 @@ class Config:
         1378693276206370969
     ]
     
+    # Chat channels for redirecting conversations
+    CHAT_CHANNELS = [
+        1278117139428933647,
+        1278117139428933649
+    ]
+    
     @classmethod
     def validate(cls):
         """Validate that all required environment variables are set"""

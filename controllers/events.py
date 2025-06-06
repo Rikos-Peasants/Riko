@@ -186,6 +186,73 @@ class EventsController:
                 logger.error(f"Missing permission to add reactions in {message.channel.name}")
             except Exception as e:
                 logger.error(f"Error adding reactions to message: {e}")
+        else:
+            # This is a text message in an image channel, check if we need to send a reminder
+            await self._check_for_chat_reminder(message)
+    
+    async def _check_for_chat_reminder(self, message: discord.Message):
+        """Check if the last 10 messages are text messages and send a chat reminder"""
+        try:
+            # Get the last 10 messages from the channel
+            messages = []
+            async for msg in message.channel.history(limit=10):
+                messages.append(msg)
+            
+            # Check if all 10 messages are text messages (no images)
+            text_message_count = 0
+            for msg in messages:
+                # Skip bot messages
+                if msg.author.bot:
+                    continue
+                
+                # Check if message has images
+                has_image = False
+                
+                # Check for attachments (uploaded images)
+                for attachment in msg.attachments:
+                    if any(attachment.filename.lower().endswith(ext) for ext in ['.png', '.jpg', '.jpeg', '.gif', '.webp']):
+                        has_image = True
+                        break
+                
+                # Check for embedded images (links)
+                if not has_image:
+                    for embed in msg.embeds:
+                        if embed.image or embed.thumbnail:
+                            has_image = True
+                            break
+                
+                if not has_image and msg.content.strip():  # Text message with content
+                    text_message_count += 1
+                else:
+                    break  # Found an image or empty message, reset count
+            
+            # If we have 10 consecutive text messages, send a reminder
+            if text_message_count >= 10:
+                # Check if we recently sent a reminder (to avoid spam)
+                recent_bot_messages = []
+                async for msg in message.channel.history(limit=20):
+                    if msg.author == self.bot.user:
+                        recent_bot_messages.append(msg)
+                
+                # Check if we already sent a chat reminder in the last 20 messages
+                for bot_msg in recent_bot_messages:
+                    if "this isn't exactly the channel to chat" in bot_msg.content.lower():
+                        return  # Already sent a reminder recently
+                
+                # Format chat channel mentions
+                chat_mentions = []
+                for channel_id in Config.CHAT_CHANNELS:
+                    chat_mentions.append(f"<#{channel_id}>")
+                
+                chat_channels_text = " or ".join(chat_mentions)
+                
+                reminder_message = f"Umm Sorry guys, this isn't exactly the channel to chat about stuff, please move over to {chat_channels_text} 💬"
+                
+                await message.channel.send(reminder_message)
+                logger.info(f"Sent chat reminder in #{message.channel.name} after {text_message_count} consecutive text messages")
+                
+        except Exception as e:
+            logger.error(f"Error checking for chat reminder: {e}")
     
     async def _handle_message_delete(self, message: discord.Message):
         """Handle message deletions to clean up image tracking"""
