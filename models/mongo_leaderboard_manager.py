@@ -21,6 +21,7 @@ class MongoLeaderboardManager:
         self.db = None
         self.collection = None
         self.images_collection = None  # New collection for storing image messages
+        self.nsfwban_collection = None  # New collection for NSFWBAN data
         self._connect()
     
     def _connect(self):
@@ -32,6 +33,7 @@ class MongoLeaderboardManager:
             self.db = self.client[self.database_name]
             self.collection = self.db[self.collection_name]
             self.images_collection = self.db['image_messages']  # New collection
+            self.nsfwban_collection = self.db['nsfwban_users']  # New collection for NSFWBAN
             
             # Create indexes for better performance
             self.collection.create_index("user_id", unique=True)
@@ -42,11 +44,95 @@ class MongoLeaderboardManager:
             self.images_collection.create_index([("channel_id", 1), ("created_at", -1)])
             self.images_collection.create_index([("score", -1)])
             
-            logger.info(f"Connected to MongoDB database '{self.database_name}', collections: {self.collection_name}, image_messages")
+            # Create indexes for NSFWBAN users
+            self.nsfwban_collection.create_index([("user_id", 1)], unique=True)
+            self.nsfwban_collection.create_index([("banned_at", -1)])
+            
+            logger.info(f"Connected to MongoDB database '{self.database_name}', collections: {self.collection_name}, image_messages, nsfwban_users")
             
         except (ConnectionFailure, ServerSelectionTimeoutError) as e:
             logger.error(f"Failed to connect to MongoDB: {e}")
             raise Exception(f"MongoDB connection failed: {e}")
+
+    # NSFWBAN Management Methods
+    async def add_nsfwban_user(self, user_id: int, user_name: str, banned_by_id: int, banned_by_name: str, reason: str = None) -> bool:
+        """Add a user to the NSFWBAN list"""
+        try:
+            doc = {
+                "user_id": str(user_id),
+                "user_name": user_name,
+                "banned_by_id": str(banned_by_id),
+                "banned_by_name": banned_by_name,
+                "reason": reason or "No reason provided",
+                "banned_at": datetime.now(),
+                "is_active": True
+            }
+            
+            result = self.nsfwban_collection.update_one(
+                {"user_id": str(user_id)},
+                {"$set": doc},
+                upsert=True
+            )
+            
+            logger.info(f"Added {user_name} to NSFWBAN list by {banned_by_name}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error adding user to NSFWBAN list: {e}")
+            return False
+
+    async def remove_nsfwban_user(self, user_id: int) -> bool:
+        """Remove a user from the NSFWBAN list"""
+        try:
+            result = self.nsfwban_collection.update_one(
+                {"user_id": str(user_id)},
+                {"$set": {"is_active": False, "unbanned_at": datetime.now()}}
+            )
+            
+            if result.modified_count > 0:
+                logger.info(f"Removed user {user_id} from NSFWBAN list")
+                return True
+            return False
+            
+        except Exception as e:
+            logger.error(f"Error removing user from NSFWBAN list: {e}")
+            return False
+
+    async def is_nsfwban_user(self, user_id: int) -> bool:
+        """Check if a user is in the NSFWBAN list"""
+        try:
+            result = self.nsfwban_collection.find_one({
+                "user_id": str(user_id),
+                "is_active": True
+            })
+            return result is not None
+            
+        except Exception as e:
+            logger.error(f"Error checking NSFWBAN status: {e}")
+            return False
+
+    async def get_nsfwban_user_info(self, user_id: int) -> Optional[Dict]:
+        """Get NSFWBAN information for a user"""
+        try:
+            result = self.nsfwban_collection.find_one({
+                "user_id": str(user_id),
+                "is_active": True
+            })
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error getting NSFWBAN user info: {e}")
+            return None
+
+    async def get_all_nsfwban_users(self) -> List[Dict]:
+        """Get all active NSFWBAN users"""
+        try:
+            cursor = self.nsfwban_collection.find({"is_active": True}).sort("banned_at", -1)
+            return list(cursor)
+            
+        except Exception as e:
+            logger.error(f"Error getting all NSFWBAN users: {e}")
+            return []
 
     async def image_message_exists(self, message_id: str) -> bool:
         """Check if an image message already exists in the database"""

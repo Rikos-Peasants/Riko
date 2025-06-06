@@ -11,6 +11,9 @@ class Config:
     RESTRICTED_ROLE_ID = int(os.getenv('RESTRICTED_ROLE_ID'))
     MONGO_URI = os.getenv('MONGO_URI')
     
+    # NSFWBAN system role IDs
+    NSFWBAN_ROLE_ID = 1372477845997359244  # Role that can use nsfwban command AND the role given to banned users
+    
     # Image reaction channels
     IMAGE_REACTION_CHANNELS = [
         1282209034916855809,

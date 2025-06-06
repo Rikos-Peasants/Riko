@@ -17,6 +17,10 @@ class EventsController:
         """Register all Discord events"""
         
         @self.bot.event
+        async def on_member_join(member: discord.Member):
+            await self._handle_member_join(member)
+        
+        @self.bot.event
         async def on_member_update(before: discord.Member, after: discord.Member):
             await self._handle_member_update(before, after)
         
@@ -44,6 +48,42 @@ class EventsController:
         @self.bot.event
         async def on_reaction_remove(reaction: discord.Reaction, user: discord.User):
             await self._handle_reaction_change(reaction, user, added=False)
+    
+    async def _handle_member_join(self, member: discord.Member):
+        """Handle member join events to reapply NSFWBAN role if needed"""
+        # Only process events from the configured guild
+        if member.guild.id != Config.GUILD_ID:
+            return
+        
+        try:
+            # Check if the user is in the NSFWBAN database
+            if await self.bot.leaderboard_manager.is_nsfwban_user(member.id):
+                # Get the NSFWBAN role
+                nsfwban_role = discord.utils.get(member.guild.roles, id=Config.NSFWBAN_ROLE_ID)
+                
+                if nsfwban_role:
+                    # Add the role back to the user
+                    await member.add_roles(nsfwban_role, reason="Reapplying NSFWBAN role on rejoin")
+                    logger.info(f"Reapplied NSFWBAN role to {member.display_name} on rejoin")
+                    
+                    # Get ban info for DM
+                    ban_info = await self.bot.leaderboard_manager.get_nsfwban_user_info(member.id)
+                    reason = ban_info.get('reason', 'No reason provided') if ban_info else 'No reason provided'
+                    
+                    # Send DM notification
+                    try:
+                        dm_embed = EmbedViews.nsfwban_dm_embed(reason, member.guild.name)
+                        await member.send(embed=dm_embed)
+                    except discord.Forbidden:
+                        # User has DMs disabled, that's okay
+                        pass
+                    except Exception as e:
+                        logger.error(f"Failed to send NSFWBAN rejoin DM to {member.display_name}: {e}")
+                else:
+                    logger.error(f"NSFWBAN role not found when trying to reapply to {member.display_name}")
+                    
+        except Exception as e:
+            logger.error(f"Error handling member join for NSFWBAN reapplication: {e}")
     
     async def _handle_member_update(self, before: discord.Member, after: discord.Member):
         """Handle member role updates"""

@@ -1,9 +1,12 @@
 import discord
 from discord.ext import commands
 from datetime import datetime, timedelta
+import logging
 from models.role_manager import RoleManager
 from views.embeds import EmbedViews
 from config import Config
+
+logger = logging.getLogger(__name__)
 
 class CommandsController:
     """Controller for handling bot commands"""
@@ -501,6 +504,230 @@ class CommandsController:
                 else:
                     await ctx.send(embed=error_embed)
         
+        # Custom permission check for NSFWBAN commands
+        def can_use_nsfwban():
+            """Check if user can use NSFWBAN commands"""
+            async def predicate(ctx):
+                # Bot owners can always use the command
+                if await ctx.bot.is_owner(ctx.author):
+                    return True
+                
+                # Check if user has administrator permissions
+                if ctx.author.guild_permissions.administrator:
+                    return True
+                
+                # Check if user has the specific NSFWBAN role
+                nsfwban_role = discord.utils.get(ctx.author.roles, id=Config.NSFWBAN_ROLE_ID)
+                if nsfwban_role:
+                    return True
+                
+                return False
+            return commands.check(predicate)
+
+        @self.bot.hybrid_command(name="nsfwban", description="Ban a user from NSFW content (Admins/NSFWBAN role only)")
+        @can_use_nsfwban()
+        async def nsfwban_command(ctx, user: discord.Member, *, reason: str = "No reason provided"):
+            """Ban a user from NSFW content"""
+            try:
+                # Check if this is a slash command (has defer) or text command
+                if hasattr(ctx, 'defer'):
+                    await ctx.defer()
+                
+                # Validate guild
+                if not ctx.guild or ctx.guild.id != Config.GUILD_ID:
+                    error_msg = "This command can only be used in the configured guild."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Check if user is trying to ban themselves
+                if user.id == ctx.author.id:
+                    error_msg = "❌ You cannot NSFWBAN yourself!"
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Check if user is trying to ban a bot owner
+                if await ctx.bot.is_owner(user):
+                    error_msg = "❌ You cannot NSFWBAN a bot owner!"
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Check if user is already NSFWBAN'd
+                if await self.bot.leaderboard_manager.is_nsfwban_user(user.id):
+                    error_msg = f"❌ {user.display_name} is already NSFWBAN'd!"
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Get the NSFWBAN role
+                nsfwban_role = discord.utils.get(ctx.guild.roles, id=Config.NSFWBAN_ROLE_ID)
+                if not nsfwban_role:
+                    error_msg = f"❌ NSFWBAN role not found! (ID: {Config.NSFWBAN_ROLE_ID})"
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Add the role to the user
+                try:
+                    await user.add_roles(nsfwban_role, reason=f"NSFWBAN by {ctx.author.display_name}: {reason}")
+                except discord.Forbidden:
+                    error_msg = "❌ I don't have permission to manage roles!"
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                except discord.HTTPException as e:
+                    error_msg = f"❌ Failed to add role: {str(e)}"
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Add user to database
+                success = await self.bot.leaderboard_manager.add_nsfwban_user(
+                    user_id=user.id,
+                    user_name=user.display_name,
+                    banned_by_id=ctx.author.id,
+                    banned_by_name=ctx.author.display_name,
+                    reason=reason
+                )
+                
+                if not success:
+                    error_msg = "❌ Failed to save ban to database!"
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Send success embed
+                embed = EmbedViews.nsfwban_success_embed(user, reason, ctx.author)
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(embed=embed)
+                else:
+                    await ctx.send(embed=embed)
+                
+                # Send DM to the banned user
+                try:
+                    dm_embed = EmbedViews.nsfwban_dm_embed(reason, ctx.guild.name)
+                    await user.send(embed=dm_embed)
+                except discord.Forbidden:
+                    # User has DMs disabled, that's okay
+                    pass
+                except Exception as e:
+                    logger.error(f"Failed to send NSFWBAN DM to {user.display_name}: {e}")
+                
+            except Exception as e:
+                error_embed = EmbedViews.error_embed(f"Failed to execute NSFWBAN: {str(e)}")
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(embed=error_embed, ephemeral=True)
+                else:
+                    await ctx.send(embed=error_embed)
+
+        @self.bot.hybrid_command(name="nsfwunban", description="Remove NSFW ban from a user (Admins/NSFWBAN role only)")
+        @can_use_nsfwban()
+        async def nsfwunban_command(ctx, user: discord.Member):
+            """Remove NSFW ban from a user"""
+            try:
+                # Check if this is a slash command (has defer) or text command
+                if hasattr(ctx, 'defer'):
+                    await ctx.defer()
+                
+                # Validate guild
+                if not ctx.guild or ctx.guild.id != Config.GUILD_ID:
+                    error_msg = "This command can only be used in the configured guild."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Check if user is NSFWBAN'd
+                if not await self.bot.leaderboard_manager.is_nsfwban_user(user.id):
+                    error_msg = f"❌ {user.display_name} is not NSFWBAN'd!"
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Get the NSFWBAN role
+                nsfwban_role = discord.utils.get(ctx.guild.roles, id=Config.NSFWBAN_ROLE_ID)
+                if not nsfwban_role:
+                    error_msg = f"❌ NSFWBAN role not found! (ID: {Config.NSFWBAN_ROLE_ID})"
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Remove the role from the user
+                try:
+                    await user.remove_roles(nsfwban_role, reason=f"NSFWUNBAN by {ctx.author.display_name}")
+                except discord.Forbidden:
+                    error_msg = "❌ I don't have permission to manage roles!"
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                except discord.HTTPException as e:
+                    error_msg = f"❌ Failed to remove role: {str(e)}"
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Remove user from database
+                success = await self.bot.leaderboard_manager.remove_nsfwban_user(user.id)
+                
+                if not success:
+                    error_msg = "❌ Failed to remove ban from database!"
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Send success embed
+                embed = EmbedViews.nsfwunban_success_embed(user, ctx.author)
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(embed=embed)
+                else:
+                    await ctx.send(embed=embed)
+                
+                # Send DM to the unbanned user
+                try:
+                    dm_embed = EmbedViews.nsfwunban_dm_embed(ctx.guild.name)
+                    await user.send(embed=dm_embed)
+                except discord.Forbidden:
+                    # User has DMs disabled, that's okay
+                    pass
+                except Exception as e:
+                    logger.error(f"Failed to send NSFWUNBAN DM to {user.display_name}: {e}")
+                
+            except Exception as e:
+                error_embed = EmbedViews.error_embed(f"Failed to execute NSFWUNBAN: {str(e)}")
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(embed=error_embed, ephemeral=True)
+                else:
+                    await ctx.send(embed=error_embed)
+
         # Store references to prevent garbage collection
         self.debug_command = debug_command
         self.test_owner_command = test_owner_command
@@ -511,4 +738,6 @@ class CommandsController:
         self.best_year_command = best_year_command
         self.leaderboard_command = leaderboard_command
         self.stats_command = stats_command 
-        self.db_status_command = db_status_command 
+        self.db_status_command = db_status_command
+        self.nsfwban_command = nsfwban_command
+        self.nsfwunban_command = nsfwunban_command 

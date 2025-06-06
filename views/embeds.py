@@ -18,6 +18,69 @@ class EmbedViews:
         return embed
     
     @staticmethod
+    def nsfwban_success_embed(user: discord.Member, reason: str, banned_by: discord.Member) -> discord.Embed:
+        """Create an embed for successful NSFWBAN"""
+        embed = discord.Embed(
+            title="🔨 NSFWBAN Applied",
+            description=f"**{user.display_name}** has been NSFWBAN'd",
+            color=discord.Color.red(),
+            timestamp=datetime.utcnow()
+        )
+        embed.add_field(name="👤 User", value=f"{user.mention} ({user.id})", inline=True)
+        embed.add_field(name="👮 Banned by", value=f"{banned_by.mention}", inline=True)
+        embed.add_field(name="📝 Reason", value=reason, inline=False)
+        embed.set_thumbnail(url=user.display_avatar.url if user.display_avatar else None)
+        return embed
+    
+    @staticmethod
+    def nsfwunban_success_embed(user: discord.Member, unbanned_by: discord.Member) -> discord.Embed:
+        """Create an embed for successful NSFWUNBAN"""
+        embed = discord.Embed(
+            title="✅ NSFWBAN Removed",
+            description=f"**{user.display_name}** has been unbanned from NSFW content",
+            color=discord.Color.green(),
+            timestamp=datetime.utcnow()
+        )
+        embed.add_field(name="👤 User", value=f"{user.mention} ({user.id})", inline=True)
+        embed.add_field(name="👮 Unbanned by", value=f"{unbanned_by.mention}", inline=True)
+        embed.set_thumbnail(url=user.display_avatar.url if user.display_avatar else None)
+        return embed
+    
+    @staticmethod
+    def nsfwban_dm_embed(reason: str, guild_name: str) -> discord.Embed:
+        """Create an embed for NSFWBAN DM notification"""
+        embed = discord.Embed(
+            title="🔨 You have been NSFWBAN'd",
+            description=f"You have been banned from accessing NSFW content in **{guild_name}**",
+            color=discord.Color.red(),
+            timestamp=datetime.utcnow()
+        )
+        embed.add_field(name="📝 Reason", value=reason, inline=False)
+        embed.add_field(
+            name="ℹ️ What this means",
+            value="• You cannot access NSFW channels\n• This restriction will persist if you leave and rejoin\n• Contact an administrator to appeal",
+            inline=False
+        )
+        embed.set_footer(text="Contact server administrators if you believe this is an error")
+        return embed
+    
+    @staticmethod
+    def nsfwunban_dm_embed(guild_name: str) -> discord.Embed:
+        """Create an embed for NSFWUNBAN DM notification"""
+        embed = discord.Embed(
+            title="✅ NSFWBAN Removed",
+            description=f"Your NSFW ban has been removed in **{guild_name}**",
+            color=discord.Color.green(),
+            timestamp=datetime.utcnow()
+        )
+        embed.add_field(
+            name="🎉 You can now",
+            value="• Access NSFW channels again\n• Participate in age-restricted content",
+            inline=False
+        )
+        return embed
+    
+    @staticmethod
     def uptime_embed(uptime_str: str) -> discord.Embed:
         """Create an embed for uptime command"""
         embed = discord.Embed(

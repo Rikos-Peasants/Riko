@@ -5,6 +5,7 @@ A professional Discord bot built with discord.py using MVC architecture that pre
 ## Features
 
 - **Role Management**: Automatically prevents users with banned role from getting restricted role
+- **NSFWBAN System**: Ban users from NSFW content with persistent role reapplication on rejoin
 - **Image Voting System**: Automatic 👍👎 reactions on images with real-time leaderboard tracking
 - **MongoDB Integration**: Cloud-based data storage with real-time updates and backups
 - **Best Image Posts**: Weekly, monthly, and yearly best image announcements
@@ -103,12 +104,23 @@ All commands support both text and slash formats:
 | Uptime | `R!uptime` | `/uptime` | Shows bot uptime | Everyone |
 | Leaderboard | `R!leaderboard` | `/leaderboard` | Shows image voting leaderboard | Everyone |
 | Stats | `R!stats [@user]` | `/stats [user]` | Shows user's image statistics | Everyone |
+| NSFWBAN | `R!nsfwban @user [reason]` | `/nsfwban user [reason]` | Ban user from NSFW content | Admins/NSFWBAN Role/Owners |
+| NSFWUNBAN | `R!nsfwunban @user` | `/nsfwunban user` | Remove NSFW ban from user | Admins/NSFWBAN Role/Owners |
 | Process Old | `R!processold` | `/processold` | Process historical images (past year) | Owners Only |
 | Best Week | `R!bestweek` | `/bestweek` | Manually post best image of week | Owners Only |
 | Best Month | `R!bestmonth` | `/bestmonth` | Manually post best image of month | Owners Only |
 | Best Year | `R!bestyear` | `/bestyear` | Manually post best image of year | Owners Only |
 | DB Status | `R!dbstatus` | `/dbstatus` | Check MongoDB connection status | Owners Only |
 | Test Owner | `R!testowner` | `/testowner` | Test bot owner permissions | Owners Only |
+
+## NSFWBAN System
+
+- **Persistent Bans**: Users banned from NSFW content with role-based restrictions
+- **Automatic Reapplication**: NSFWBAN role is automatically reapplied when users rejoin the server
+- **Permission-Based Access**: Only users with the NSFWBAN role (ID: 1372477845997359244), administrators, or bot owners can use ban commands
+- **Database Tracking**: All bans are stored in MongoDB with reason, timestamp, and moderator information
+- **DM Notifications**: Users receive DM notifications when banned/unbanned with detailed information
+- **Audit Trail**: Complete logging of all NSFWBAN actions for moderation transparency
 
 ## Image Voting System
 
