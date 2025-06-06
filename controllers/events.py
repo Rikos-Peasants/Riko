@@ -58,8 +58,8 @@ class EventsController:
         try:
             # Check if the user is in the NSFWBAN database
             if await self.bot.leaderboard_manager.is_nsfwban_user(member.id):
-                # Get the NSFWBAN role
-                nsfwban_role = discord.utils.get(member.guild.roles, id=Config.NSFWBAN_ROLE_ID)
+                # Get the NSFWBAN banned role (the role applied to banned users)
+                nsfwban_role = discord.utils.get(member.guild.roles, id=Config.NSFWBAN_BANNED_ROLE_ID)
                 
                 if nsfwban_role:
                     # Add the role back to the user

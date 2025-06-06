@@ -516,9 +516,9 @@ class CommandsController:
                 if ctx.author.guild_permissions.administrator:
                     return True
                 
-                # Check if user has the specific NSFWBAN role
-                nsfwban_role = discord.utils.get(ctx.author.roles, id=Config.NSFWBAN_ROLE_ID)
-                if nsfwban_role:
+                # Check if user has the specific NSFWBAN moderator role
+                nsfwban_moderator_role = discord.utils.get(ctx.author.roles, id=Config.NSFWBAN_MODERATOR_ROLE_ID)
+                if nsfwban_moderator_role:
                     return True
                 
                 return False
@@ -569,10 +569,10 @@ class CommandsController:
                         await ctx.send(error_msg)
                     return
                 
-                # Get the NSFWBAN role
-                nsfwban_role = discord.utils.get(ctx.guild.roles, id=Config.NSFWBAN_ROLE_ID)
+                # Get the NSFWBAN banned role (the role applied to banned users)
+                nsfwban_role = discord.utils.get(ctx.guild.roles, id=Config.NSFWBAN_BANNED_ROLE_ID)
                 if not nsfwban_role:
-                    error_msg = f"❌ NSFWBAN role not found! (ID: {Config.NSFWBAN_ROLE_ID})"
+                    error_msg = f"❌ NSFWBAN role not found! (ID: {Config.NSFWBAN_BANNED_ROLE_ID})"
                     if hasattr(ctx, 'followup'):
                         await ctx.followup.send(error_msg, ephemeral=True)
                     else:
@@ -665,10 +665,10 @@ class CommandsController:
                         await ctx.send(error_msg)
                     return
                 
-                # Get the NSFWBAN role
-                nsfwban_role = discord.utils.get(ctx.guild.roles, id=Config.NSFWBAN_ROLE_ID)
+                # Get the NSFWBAN banned role (the role applied to banned users)
+                nsfwban_role = discord.utils.get(ctx.guild.roles, id=Config.NSFWBAN_BANNED_ROLE_ID)
                 if not nsfwban_role:
-                    error_msg = f"❌ NSFWBAN role not found! (ID: {Config.NSFWBAN_ROLE_ID})"
+                    error_msg = f"❌ NSFWBAN role not found! (ID: {Config.NSFWBAN_BANNED_ROLE_ID})"
                     if hasattr(ctx, 'followup'):
                         await ctx.followup.send(error_msg, ephemeral=True)
                     else:
