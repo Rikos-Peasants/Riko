@@ -12,6 +12,7 @@ class EventsController:
     
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        self.spam_channel_message_count = 0  # Track messages in spam channel
     
     def register_events(self):
         """Register all Discord events"""
@@ -134,6 +135,9 @@ class EventsController:
         if not message.guild or message.guild.id != Config.GUILD_ID:
             return
         
+        # Check for spam channel flood detection
+        await self._check_spam_channel_flood(message)
+        
         # Check if message is in image reaction channels
         if message.channel.id not in Config.IMAGE_REACTION_CHANNELS:
             return
@@ -253,6 +257,42 @@ class EventsController:
                 
         except Exception as e:
             logger.error(f"Error checking for chat reminder: {e}")
+    
+    async def _check_spam_channel_flood(self, message: discord.Message):
+        """Check for message flooding in the spam channel"""
+        # Specific channel ID for spam detection
+        SPAM_CHANNEL_ID = 1373806584748314634
+        
+        # Only check messages in the specified spam channel
+        if message.channel.id != SPAM_CHANNEL_ID:
+            return
+        
+        # Don't count bot messages or webhook messages
+        if message.author.bot or message.webhook_id:
+            return
+        
+        # Don't count empty messages
+        if not message.content.strip():
+            return
+        
+        try:
+            # Increment message count
+            self.spam_channel_message_count += 1
+            logger.debug(f"Spam channel message count: {self.spam_channel_message_count}")
+            
+            # Check if we've reached 10 messages
+            if self.spam_channel_message_count >= 10:
+                # Send the "nap" message with enhanced spelling
+                nap_message = "Shut up, people! I'm trying to nap here. I couldn't care less that you're all flooding my spam channel. 😴💤"
+                
+                await message.channel.send(nap_message)
+                logger.info(f"Sent nap message in #{message.channel.name} after {self.spam_channel_message_count} messages")
+                
+                # Reset counter to prevent spam
+                self.spam_channel_message_count = 0
+                
+        except Exception as e:
+            logger.error(f"Error in spam channel flood detection: {e}")
     
     async def _handle_message_delete(self, message: discord.Message):
         """Handle message deletions to clean up image tracking"""
