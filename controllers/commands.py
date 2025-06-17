@@ -834,6 +834,20 @@ class CommandsController:
                 else:
                     await ctx.send(embed=embed)
                 
+                # Send log message to configured log channel
+                try:
+                    log_channel_id = await self.bot.leaderboard_manager.get_warning_log_channel(ctx.guild.id)
+                    if log_channel_id:
+                        log_channel = ctx.guild.get_channel(log_channel_id)
+                        if log_channel:
+                            log_embed = EmbedViews.warning_log_embed(user, ctx.author, reason, warning_count, action)
+                            await log_channel.send(embed=log_embed)
+                            logger.info(f"Warning logged to #{log_channel.name} for {user.display_name}")
+                        else:
+                            logger.warning(f"Warning log channel {log_channel_id} not found in guild {ctx.guild.name}")
+                except Exception as e:
+                    logger.error(f"Failed to send warning log: {e}")
+                
                 # Send DM to the warned user (if not kicked)
                 if action != "kick":
                     try:
@@ -942,6 +956,30 @@ class CommandsController:
                 else:
                     await ctx.send(embed=embed)
                 
+                # Send log message to configured log channel
+                try:
+                    log_channel_id = await self.bot.leaderboard_manager.get_warning_log_channel(ctx.guild.id)
+                    if log_channel_id:
+                        log_channel = ctx.guild.get_channel(log_channel_id)
+                        if log_channel:
+                            log_embed = discord.Embed(
+                                title="🧹 Warnings Cleared",
+                                description=f"All warnings have been cleared for {user.mention}",
+                                color=discord.Color.green(),
+                                timestamp=discord.utils.utcnow()
+                            )
+                            log_embed.add_field(name="👤 User", value=f"{user.mention}\n`{user.name}` ({user.id})", inline=True)
+                            log_embed.add_field(name="👮 Cleared by", value=f"{ctx.author.mention}\n`{ctx.author.name}`", inline=True)
+                            log_embed.add_field(name="📊 Warnings Cleared", value=f"**{cleared_count}** warnings", inline=True)
+                            log_embed.set_thumbnail(url=user.display_avatar.url if user.display_avatar else None)
+                            log_embed.set_footer(text="Warning System Log", icon_url=ctx.author.display_avatar.url if ctx.author.display_avatar else None)
+                            await log_channel.send(embed=log_embed)
+                            logger.info(f"Warning clear logged to #{log_channel.name} for {user.display_name}")
+                        else:
+                            logger.warning(f"Warning log channel {log_channel_id} not found in guild {ctx.guild.name}")
+                except Exception as e:
+                    logger.error(f"Failed to send warning clear log: {e}")
+                
                 # Send DM to the user
                 try:
                     dm_embed = discord.Embed(
@@ -967,6 +1005,112 @@ class CommandsController:
                 else:
                     await ctx.send(embed=error_embed)
 
+        @self.bot.hybrid_command(name="setlogchannel", description="Set the channel for warning logs (Manage Server permission required)")
+        @can_warn()
+        async def setlogchannel_command(ctx, channel: discord.TextChannel = None):
+            """Set or view the warning log channel"""
+            try:
+                # Check if this is a slash command (has defer) or text command
+                if hasattr(ctx, 'defer'):
+                    await ctx.defer()
+                
+                # Validate guild
+                if not ctx.guild or ctx.guild.id != Config.GUILD_ID:
+                    error_msg = "This command can only be used in the configured guild."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # If no channel provided, show current setting
+                if channel is None:
+                    current_channel_id = await self.bot.leaderboard_manager.get_warning_log_channel(ctx.guild.id)
+                    if current_channel_id:
+                        current_channel = ctx.guild.get_channel(current_channel_id)
+                        if current_channel:
+                            embed = discord.Embed(
+                                title="📋 Warning Log Channel",
+                                description=f"Warnings are currently logged to {current_channel.mention}",
+                                color=discord.Color.blue(),
+                                timestamp=discord.utils.utcnow()
+                            )
+                            embed.add_field(name="Channel", value=f"#{current_channel.name}", inline=True)
+                            embed.add_field(name="Channel ID", value=str(current_channel_id), inline=True)
+                            embed.set_footer(text="Use /setlogchannel #channel to change")
+                        else:
+                            embed = discord.Embed(
+                                title="⚠️ Warning Log Channel",
+                                description="Warning log channel is set but the channel no longer exists!",
+                                color=discord.Color.orange(),
+                                timestamp=discord.utils.utcnow()
+                            )
+                            embed.add_field(name="Missing Channel ID", value=str(current_channel_id), inline=False)
+                            embed.set_footer(text="Use /setlogchannel #channel to set a new channel")
+                    else:
+                        embed = discord.Embed(
+                            title="📋 Warning Log Channel",
+                            description="No warning log channel is currently set.",
+                            color=discord.Color.light_grey(),
+                            timestamp=discord.utils.utcnow()
+                        )
+                        embed.add_field(name="ℹ️ Info", value="Warnings will not be logged until a channel is set.", inline=False)
+                        embed.set_footer(text="Use /setlogchannel #channel to set one")
+                    
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(embed=embed)
+                    else:
+                        await ctx.send(embed=embed)
+                    return
+                
+                # Set the new log channel
+                success = await self.bot.leaderboard_manager.set_warning_log_channel(ctx.guild.id, channel.id)
+                
+                if success:
+                    embed = discord.Embed(
+                        title="✅ Warning Log Channel Set",
+                        description=f"Warning logs will now be sent to {channel.mention}",
+                        color=discord.Color.green(),
+                        timestamp=discord.utils.utcnow()
+                    )
+                    embed.add_field(name="Channel", value=f"#{channel.name}", inline=True)
+                    embed.add_field(name="Set by", value=ctx.author.mention, inline=True)
+                    embed.set_footer(text="All future warnings will be logged here")
+                    
+                    # Send a test log message
+                    try:
+                        test_embed = discord.Embed(
+                            title="🔧 Warning Log Channel Configured",
+                            description=f"This channel has been set as the warning log channel by {ctx.author.mention}.",
+                            color=discord.Color.blue(),
+                            timestamp=discord.utils.utcnow()
+                        )
+                        test_embed.add_field(name="📋 What gets logged here:", value="• Warning issued\n• User timeouts\n• User kicks\n• Warning clears", inline=False)
+                        test_embed.set_footer(text="Warning System Configuration")
+                        await channel.send(embed=test_embed)
+                    except discord.Forbidden:
+                        embed.add_field(name="⚠️ Warning", value="I don't have permission to send messages in that channel!", inline=False)
+                    
+                else:
+                    embed = discord.Embed(
+                        title="❌ Error",
+                        description="Failed to set the warning log channel. Please try again.",
+                        color=discord.Color.red(),
+                        timestamp=discord.utils.utcnow()
+                    )
+                
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(embed=embed)
+                else:
+                    await ctx.send(embed=embed)
+                
+            except Exception as e:
+                error_embed = EmbedViews.error_embed(f"Failed to set log channel: {str(e)}")
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(embed=error_embed, ephemeral=True)
+                else:
+                    await ctx.send(embed=error_embed)
+
         # Store references to prevent garbage collection
         self.debug_command = debug_command
         self.test_owner_command = test_owner_command
@@ -982,4 +1126,5 @@ class CommandsController:
         self.nsfwunban_command = nsfwunban_command
         self.warn_command = warn_command
         self.warnings_command = warnings_command
-        self.clearwarnings_command = clearwarnings_command 
+        self.clearwarnings_command = clearwarnings_command
+        self.setlogchannel_command = setlogchannel_command 

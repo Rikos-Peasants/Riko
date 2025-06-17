@@ -27,6 +27,9 @@ class Config:
         1278117139428933649
     ]
     
+    # Warning log channel (can be configured with /setlogchannel)
+    WARNING_LOG_CHANNEL_ID = None  # Will be set dynamically
+    
     @classmethod
     def validate(cls):
         """Validate that all required environment variables are set"""

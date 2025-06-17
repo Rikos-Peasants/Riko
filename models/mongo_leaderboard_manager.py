@@ -23,6 +23,7 @@ class MongoLeaderboardManager:
         self.images_collection = None  # New collection for storing image messages
         self.nsfwban_collection = None  # New collection for NSFWBAN data
         self.warnings_collection = None  # New collection for warnings
+        self.settings_collection = None  # New collection for bot settings
         self._connect()
     
     def _connect(self):
@@ -36,6 +37,7 @@ class MongoLeaderboardManager:
             self.images_collection = self.db['image_messages']  # New collection
             self.nsfwban_collection = self.db['nsfwban_users']  # New collection for NSFWBAN
             self.warnings_collection = self.db['warnings']  # New collection for warnings
+            self.settings_collection = self.db['settings']  # New collection for bot settings
             
             # Create indexes for better performance
             self.collection.create_index("user_id", unique=True)
@@ -55,7 +57,10 @@ class MongoLeaderboardManager:
             self.warnings_collection.create_index([("guild_id", 1)])
             self.warnings_collection.create_index([("created_at", -1)])
             
-            logger.info(f"Connected to MongoDB database '{self.database_name}', collections: {self.collection_name}, image_messages, nsfwban_users, warnings")
+            # Create indexes for settings
+            self.settings_collection.create_index([("guild_id", 1), ("setting_name", 1)], unique=True)
+            
+            logger.info(f"Connected to MongoDB database '{self.database_name}', collections: {self.collection_name}, image_messages, nsfwban_users, warnings, settings")
             
         except (ConnectionFailure, ServerSelectionTimeoutError) as e:
             logger.error(f"Failed to connect to MongoDB: {e}")
@@ -557,4 +562,48 @@ class MongoLeaderboardManager:
         elif warning_count >= 5:
             return "kick"
         else:
-            return "none" 
+            return "none"
+
+    # Settings Management Methods
+    async def set_guild_setting(self, guild_id: int, setting_name: str, setting_value) -> bool:
+        """Set a guild-specific setting"""
+        try:
+            result = self.settings_collection.update_one(
+                {"guild_id": str(guild_id), "setting_name": setting_name},
+                {
+                    "$set": {
+                        "guild_id": str(guild_id),
+                        "setting_name": setting_name,
+                        "setting_value": setting_value,
+                        "updated_at": datetime.now()
+                    }
+                },
+                upsert=True
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Error setting guild setting: {e}")
+            return False
+
+    async def get_guild_setting(self, guild_id: int, setting_name: str, default_value=None):
+        """Get a guild-specific setting"""
+        try:
+            result = self.settings_collection.find_one({
+                "guild_id": str(guild_id),
+                "setting_name": setting_name
+            })
+            if result:
+                return result.get("setting_value", default_value)
+            return default_value
+        except Exception as e:
+            logger.error(f"Error getting guild setting: {e}")
+            return default_value
+
+    async def get_warning_log_channel(self, guild_id: int) -> Optional[int]:
+        """Get the warning log channel for a guild"""
+        channel_id = await self.get_guild_setting(guild_id, "warning_log_channel")
+        return int(channel_id) if channel_id else None
+
+    async def set_warning_log_channel(self, guild_id: int, channel_id: int) -> bool:
+        """Set the warning log channel for a guild"""
+        return await self.set_guild_setting(guild_id, "warning_log_channel", str(channel_id)) 

@@ -294,6 +294,59 @@ class EmbedViews:
         return embed
     
     @staticmethod
+    def warning_log_embed(user: discord.Member, moderator: discord.Member, reason: str, warning_count: int, action: str) -> discord.Embed:
+        """Create an embed for warning log messages"""
+        # Determine color and emoji based on warning count
+        if warning_count == 1:
+            color = discord.Color.orange()
+            emoji = "⚠️"
+        elif warning_count == 2:
+            color = discord.Color.red()
+            emoji = "🔴"
+        elif warning_count == 3:
+            color = discord.Color.dark_red()
+            emoji = "🚨"
+        elif warning_count == 4:
+            color = discord.Color.dark_red()
+            emoji = "⛔"
+        else:
+            color = discord.Color.dark_red()
+            emoji = "🔨"
+        
+        embed = discord.Embed(
+            title=f"{emoji} Warning Issued - #{warning_count}",
+            description=f"A warning has been issued to {user.mention}",
+            color=color,
+            timestamp=discord.utils.utcnow()
+        )
+        
+        embed.add_field(name="👤 User", value=f"{user.mention}\n`{user.name}` ({user.id})", inline=True)
+        embed.add_field(name="👮 Moderator", value=f"{moderator.mention}\n`{moderator.name}`", inline=True)
+        embed.add_field(name="📊 Warning #", value=f"**{warning_count}**/5", inline=True)
+        
+        embed.add_field(name="📝 Reason", value=reason, inline=False)
+        
+        # Add action taken
+        action_text = {
+            "warning": "⚠️ Warning logged",
+            "timeout_1h": "🔇 Timed out for 1 hour",
+            "timeout_4h": "🔇 Timed out for 4 hours", 
+            "timeout_1w": "🔇 Timed out for 1 week",
+            "kick": "👢 User kicked from server"
+        }
+        
+        embed.add_field(
+            name="⚡ Action Taken",
+            value=action_text.get(action, "No action taken"),
+            inline=False
+        )
+        
+        embed.set_thumbnail(url=user.display_avatar.url if user.display_avatar else None)
+        embed.set_footer(text="Warning System Log", icon_url=moderator.display_avatar.url if moderator.display_avatar else None)
+        
+        return embed
+    
+    @staticmethod
     def leaderboard_embed(leaderboard_data: list, period: str = "all time") -> discord.Embed:
         """Create an embed for the leaderboard"""
         embed = discord.Embed(
