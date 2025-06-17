@@ -22,6 +22,7 @@ class MongoLeaderboardManager:
         self.collection = None
         self.images_collection = None  # New collection for storing image messages
         self.nsfwban_collection = None  # New collection for NSFWBAN data
+        self.warnings_collection = None  # New collection for warnings
         self._connect()
     
     def _connect(self):
@@ -34,6 +35,7 @@ class MongoLeaderboardManager:
             self.collection = self.db[self.collection_name]
             self.images_collection = self.db['image_messages']  # New collection
             self.nsfwban_collection = self.db['nsfwban_users']  # New collection for NSFWBAN
+            self.warnings_collection = self.db['warnings']  # New collection for warnings
             
             # Create indexes for better performance
             self.collection.create_index("user_id", unique=True)
@@ -48,7 +50,12 @@ class MongoLeaderboardManager:
             self.nsfwban_collection.create_index([("user_id", 1)], unique=True)
             self.nsfwban_collection.create_index([("banned_at", -1)])
             
-            logger.info(f"Connected to MongoDB database '{self.database_name}', collections: {self.collection_name}, image_messages, nsfwban_users")
+            # Create indexes for warnings
+            self.warnings_collection.create_index([("user_id", 1)])
+            self.warnings_collection.create_index([("guild_id", 1)])
+            self.warnings_collection.create_index([("created_at", -1)])
+            
+            logger.info(f"Connected to MongoDB database '{self.database_name}', collections: {self.collection_name}, image_messages, nsfwban_users, warnings")
             
         except (ConnectionFailure, ServerSelectionTimeoutError) as e:
             logger.error(f"Failed to connect to MongoDB: {e}")
@@ -442,4 +449,112 @@ class MongoLeaderboardManager:
         """Close the MongoDB connection"""
         if self.client:
             self.client.close()
-            logger.info("MongoDB connection closed") 
+            logger.info("MongoDB connection closed")
+
+    # Warning System Methods
+    async def add_warning(self, guild_id: int, user_id: int, user_name: str, moderator_id: int, moderator_name: str, reason: str) -> Dict:
+        """Add a warning to a user and return the warning count and action taken"""
+        try:
+            # Create warning document
+            warning_doc = {
+                "guild_id": str(guild_id),
+                "user_id": str(user_id),
+                "user_name": user_name,
+                "moderator_id": str(moderator_id),
+                "moderator_name": moderator_name,
+                "reason": reason,
+                "created_at": datetime.now(),
+                "is_active": True
+            }
+            
+            # Insert the warning
+            self.warnings_collection.insert_one(warning_doc)
+            
+            # Get current warning count
+            warning_count = await self.get_warning_count(guild_id, user_id)
+            
+            # Determine action based on warning count
+            action = self._get_warning_action(warning_count)
+            
+            logger.info(f"Added warning #{warning_count} to user {user_name} by {moderator_name}: {reason}")
+            
+            return {
+                "warning_count": warning_count,
+                "action": action,
+                "warning_id": str(warning_doc.get("_id", ""))
+            }
+            
+        except Exception as e:
+            logger.error(f"Error adding warning: {e}")
+            return {"warning_count": 0, "action": "none", "warning_id": ""}
+
+    async def get_warning_count(self, guild_id: int, user_id: int) -> int:
+        """Get the number of active warnings for a user"""
+        try:
+            count = self.warnings_collection.count_documents({
+                "guild_id": str(guild_id),
+                "user_id": str(user_id),
+                "is_active": True
+            })
+            return count
+        except Exception as e:
+            logger.error(f"Error getting warning count: {e}")
+            return 0
+
+    async def get_user_warnings(self, guild_id: int, user_id: int, limit: int = 10) -> List[Dict]:
+        """Get warnings for a specific user"""
+        try:
+            cursor = self.warnings_collection.find({
+                "guild_id": str(guild_id),
+                "user_id": str(user_id),
+                "is_active": True
+            }).sort("created_at", -1).limit(limit)
+            
+            return list(cursor)
+        except Exception as e:
+            logger.error(f"Error getting user warnings: {e}")
+            return []
+
+    async def remove_warning(self, warning_id: str) -> bool:
+        """Remove/deactivate a specific warning"""
+        try:
+            from bson import ObjectId
+            result = self.warnings_collection.update_one(
+                {"_id": ObjectId(warning_id)},
+                {"$set": {"is_active": False, "removed_at": datetime.now()}}
+            )
+            return result.modified_count > 0
+        except Exception as e:
+            logger.error(f"Error removing warning: {e}")
+            return False
+
+    async def clear_user_warnings(self, guild_id: int, user_id: int) -> int:
+        """Clear all warnings for a user and return the number cleared"""
+        try:
+            result = self.warnings_collection.update_many(
+                {
+                    "guild_id": str(guild_id),
+                    "user_id": str(user_id),
+                    "is_active": True
+                },
+                {"$set": {"is_active": False, "cleared_at": datetime.now()}}
+            )
+            return result.modified_count
+        except Exception as e:
+            logger.error(f"Error clearing user warnings: {e}")
+            return 0
+
+    def _get_warning_action(self, warning_count: int) -> str:
+        """Determine the action to take based on warning count"""
+        if warning_count == 1:
+            return "warning"
+        elif warning_count == 2:
+            return "timeout_1h"
+        elif warning_count == 3:
+            return "timeout_4h"
+        elif warning_count == 4:
+            return "timeout_1w"
+        elif warning_count >= 5:
+            return "kick"
+        else:
+            return "none" 

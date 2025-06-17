@@ -185,6 +185,115 @@ class EmbedViews:
         return embed
     
     @staticmethod
+    def warning_embed(user: discord.Member, moderator: discord.Member, reason: str, warning_count: int, action: str) -> discord.Embed:
+        """Create an embed for a user warning"""
+        # Determine color based on warning count
+        if warning_count == 1:
+            color = discord.Color.orange()
+            title = "⚠️ Warning Issued"
+        elif warning_count == 2:
+            color = discord.Color.red()
+            title = "🔴 Second Warning - Timeout Applied"
+        elif warning_count == 3:
+            color = discord.Color.dark_red()
+            title = "🚨 Third Warning - Extended Timeout"
+        elif warning_count == 4:
+            color = discord.Color.dark_red()
+            title = "⛔ Fourth Warning - Long Timeout"
+        else:
+            color = discord.Color.dark_red()
+            title = "🔨 Final Warning - User Kicked"
+        
+        embed = discord.Embed(
+            title=title,
+            description=f"**{user.display_name}** has received warning #{warning_count}",
+            color=color,
+            timestamp=datetime.utcnow()
+        )
+        
+        embed.add_field(name="👤 User", value=f"{user.mention} ({user.id})", inline=True)
+        embed.add_field(name="👮 Moderator", value=f"{moderator.mention}", inline=True)
+        embed.add_field(name="📊 Warning Count", value=f"**{warning_count}**/5", inline=True)
+        embed.add_field(name="📝 Reason", value=reason, inline=False)
+        
+        # Add action taken
+        action_text = {
+            "warning": "⚠️ Warning logged - no immediate action",
+            "timeout_1h": "🔇 User timed out for 1 hour",
+            "timeout_4h": "🔇 User timed out for 4 hours", 
+            "timeout_1w": "🔇 User timed out for 1 week",
+            "kick": "👢 User has been kicked from the server"
+        }
+        
+        embed.add_field(
+            name="⚡ Action Taken",
+            value=action_text.get(action, "No action taken"),
+            inline=False
+        )
+        
+        embed.set_thumbnail(url=user.display_avatar.url if user.display_avatar else None)
+        embed.set_footer(text="Server Moderation System")
+        
+        return embed
+    
+    @staticmethod
+    def user_warnings_embed(user: discord.Member, warnings: list, total_count: int) -> discord.Embed:
+        """Create an embed showing a user's warnings"""
+        embed = discord.Embed(
+            title=f"📋 Warnings for {user.display_name}",
+            description=f"Showing recent warnings ({len(warnings)} of {total_count} total)",
+            color=discord.Color.blue(),
+            timestamp=datetime.utcnow()
+        )
+        
+        embed.add_field(name="👤 User", value=f"{user.mention} ({user.id})", inline=True)
+        embed.add_field(name="⚠️ Active Warnings", value=f"**{total_count}**/5", inline=True)
+        embed.add_field(name="📊 Status", value="❌ At Risk" if total_count >= 3 else "✅ Good Standing", inline=True)
+        
+        if warnings:
+            for i, warning in enumerate(warnings[:5], 1):  # Show max 5 recent warnings
+                created_at = warning.get('created_at', datetime.now())
+                if isinstance(created_at, str):
+                    try:
+                        created_at = datetime.fromisoformat(created_at)
+                    except:
+                        created_at = datetime.now()
+                
+                embed.add_field(
+                    name=f"Warning #{i}",
+                    value=f"**Reason:** {warning.get('reason', 'No reason')}\n"
+                          f"**By:** {warning.get('moderator_name', 'Unknown')}\n"
+                          f"**Date:** {created_at.strftime('%m/%d/%Y at %I:%M %p')}",
+                    inline=False
+                )
+        else:
+            embed.add_field(name="✅ No Warnings", value="This user has no active warnings.", inline=False)
+        
+        embed.set_thumbnail(url=user.display_avatar.url if user.display_avatar else None)
+        embed.set_footer(text="Use /clearwarnings to remove warnings")
+        
+        return embed
+    
+    @staticmethod
+    def warning_cleared_embed(user: discord.Member, cleared_count: int, moderator: discord.Member) -> discord.Embed:
+        """Create an embed for cleared warnings"""
+        embed = discord.Embed(
+            title="🧹 Warnings Cleared",
+            description=f"All warnings have been cleared for **{user.display_name}**",
+            color=discord.Color.green(),
+            timestamp=datetime.utcnow()
+        )
+        
+        embed.add_field(name="👤 User", value=f"{user.mention} ({user.id})", inline=True)
+        embed.add_field(name="👮 Cleared by", value=f"{moderator.mention}", inline=True)
+        embed.add_field(name="📊 Warnings Cleared", value=f"**{cleared_count}** warnings", inline=True)
+        
+        embed.set_thumbnail(url=user.display_avatar.url if user.display_avatar else None)
+        embed.set_footer(text="User is now in good standing")
+        
+        return embed
+    
+    @staticmethod
     def leaderboard_embed(leaderboard_data: list, period: str = "all time") -> discord.Embed:
         """Create an embed for the leaderboard"""
         embed = discord.Embed(

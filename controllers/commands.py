@@ -728,6 +728,245 @@ class CommandsController:
                 else:
                     await ctx.send(embed=error_embed)
 
+        # Warning system commands
+        def can_warn():
+            """Check if user can use warning commands (needs manage_guild permission)"""
+            async def predicate(ctx):
+                # Bot owners can always use the command
+                if await ctx.bot.is_owner(ctx.author):
+                    return True
+                
+                # Check if the user has manage_guild permission
+                if not ctx.author.guild_permissions.manage_guild:
+                    return False
+                
+                return True
+            return commands.check(predicate)
+
+        @self.bot.hybrid_command(name="warn", description="Issue a warning to a user (Manage Server permission required)")
+        @can_warn()
+        async def warn_command(ctx, user: discord.Member, *, reason: str = "No reason provided"):
+            """Issue a warning to a user with automatic escalation"""
+            try:
+                # Check if this is a slash command (has defer) or text command
+                if hasattr(ctx, 'defer'):
+                    await ctx.defer()
+                
+                # Validate guild
+                if not ctx.guild or ctx.guild.id != Config.GUILD_ID:
+                    error_msg = "This command can only be used in the configured guild."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Check if user is trying to warn themselves
+                if user.id == ctx.author.id:
+                    error_msg = "❌ You cannot warn yourself!"
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Check if user is trying to warn a bot
+                if user.bot:
+                    error_msg = "❌ You cannot warn bots!"
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Check if user is trying to warn a bot owner
+                if await ctx.bot.is_owner(user):
+                    error_msg = "❌ You cannot warn a bot owner!"
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Add the warning to database
+                warning_result = await self.bot.leaderboard_manager.add_warning(
+                    guild_id=ctx.guild.id,
+                    user_id=user.id,
+                    user_name=user.display_name,
+                    moderator_id=ctx.author.id,
+                    moderator_name=ctx.author.display_name,
+                    reason=reason
+                )
+                
+                warning_count = warning_result.get("warning_count", 0)
+                action = warning_result.get("action", "none")
+                
+                # Apply automatic escalation
+                try:
+                    if action == "timeout_1h":
+                        timeout_until = datetime.utcnow() + timedelta(hours=1)
+                        await user.timeout(timeout_until, reason=f"Automated warning escalation: {reason}")
+                    elif action == "timeout_4h":
+                        timeout_until = datetime.utcnow() + timedelta(hours=4)
+                        await user.timeout(timeout_until, reason=f"Automated warning escalation: {reason}")
+                    elif action == "timeout_1w":
+                        timeout_until = datetime.utcnow() + timedelta(weeks=1)
+                        await user.timeout(timeout_until, reason=f"Automated warning escalation: {reason}")
+                    elif action == "kick":
+                        await user.kick(reason=f"Automated warning escalation (5th warning): {reason}")
+                except discord.Forbidden:
+                    error_msg = "⚠️ Warning logged, but I don't have permission to apply timeout/kick!"
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                except discord.HTTPException as e:
+                    error_msg = f"⚠️ Warning logged, but failed to apply action: {str(e)}"
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                
+                # Send warning embed
+                embed = EmbedViews.warning_embed(user, ctx.author, reason, warning_count, action)
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(embed=embed)
+                else:
+                    await ctx.send(embed=embed)
+                
+                # Send DM to the warned user (if not kicked)
+                if action != "kick":
+                    try:
+                        dm_embed = discord.Embed(
+                            title="⚠️ You have been warned",
+                            description=f"You have received a warning in **{ctx.guild.name}**.",
+                            color=discord.Color.orange(),
+                            timestamp=datetime.utcnow()
+                        )
+                        dm_embed.add_field(name="📝 Reason", value=reason, inline=False)
+                        dm_embed.add_field(name="⚠️ Warning Count", value=f"{warning_count}/5", inline=True)
+                        dm_embed.add_field(name="👮 Warned by", value=ctx.author.display_name, inline=True)
+                        
+                        if action != "warning":
+                            action_text = {
+                                "timeout_1h": "You have been timed out for 1 hour.",
+                                "timeout_4h": "You have been timed out for 4 hours.",
+                                "timeout_1w": "You have been timed out for 1 week."
+                            }
+                            dm_embed.add_field(name="⚡ Action Taken", value=action_text.get(action), inline=False)
+                        
+                        dm_embed.set_footer(text="Please follow the server rules to avoid further warnings.")
+                        await user.send(embed=dm_embed)
+                    except discord.Forbidden:
+                        # User has DMs disabled, that's okay
+                        pass
+                    except Exception as e:
+                        logger.error(f"Failed to send warning DM to {user.display_name}: {e}")
+                
+            except Exception as e:
+                error_embed = EmbedViews.error_embed(f"Failed to issue warning: {str(e)}")
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(embed=error_embed, ephemeral=True)
+                else:
+                    await ctx.send(embed=error_embed)
+
+        @self.bot.hybrid_command(name="warnings", description="View warnings for a user (Manage Server permission required)")
+        @can_warn()
+        async def warnings_command(ctx, user: discord.Member):
+            """View warnings for a specific user"""
+            try:
+                # Check if this is a slash command (has defer) or text command
+                if hasattr(ctx, 'defer'):
+                    await ctx.defer()
+                
+                # Validate guild
+                if not ctx.guild or ctx.guild.id != Config.GUILD_ID:
+                    error_msg = "This command can only be used in the configured guild."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Get warnings for the user
+                warnings = await self.bot.leaderboard_manager.get_user_warnings(ctx.guild.id, user.id)
+                warning_count = await self.bot.leaderboard_manager.get_warning_count(ctx.guild.id, user.id)
+                
+                # Create and send embed
+                embed = EmbedViews.user_warnings_embed(user, warnings, warning_count)
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(embed=embed)
+                else:
+                    await ctx.send(embed=embed)
+                
+            except Exception as e:
+                error_embed = EmbedViews.error_embed(f"Failed to retrieve warnings: {str(e)}")
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(embed=error_embed, ephemeral=True)
+                else:
+                    await ctx.send(embed=error_embed)
+
+        @self.bot.hybrid_command(name="clearwarnings", description="Clear all warnings for a user (Manage Server permission required)")
+        @can_warn()
+        async def clearwarnings_command(ctx, user: discord.Member):
+            """Clear all warnings for a user"""
+            try:
+                # Check if this is a slash command (has defer) or text command
+                if hasattr(ctx, 'defer'):
+                    await ctx.defer()
+                
+                # Validate guild
+                if not ctx.guild or ctx.guild.id != Config.GUILD_ID:
+                    error_msg = "This command can only be used in the configured guild."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Clear warnings for the user
+                cleared_count = await self.bot.leaderboard_manager.clear_user_warnings(ctx.guild.id, user.id)
+                
+                if cleared_count == 0:
+                    error_msg = f"❌ {user.display_name} has no active warnings to clear."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Create and send embed
+                embed = EmbedViews.warning_cleared_embed(user, cleared_count, ctx.author)
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(embed=embed)
+                else:
+                    await ctx.send(embed=embed)
+                
+                # Send DM to the user
+                try:
+                    dm_embed = discord.Embed(
+                        title="🧹 Your warnings have been cleared",
+                        description=f"All your warnings in **{ctx.guild.name}** have been cleared by a moderator.",
+                        color=discord.Color.green(),
+                        timestamp=datetime.utcnow()
+                    )
+                    dm_embed.add_field(name="👮 Cleared by", value=ctx.author.display_name, inline=True)
+                    dm_embed.add_field(name="📊 Warnings Cleared", value=str(cleared_count), inline=True)
+                    dm_embed.set_footer(text="You now have a clean slate! Please continue following the rules.")
+                    await user.send(embed=dm_embed)
+                except discord.Forbidden:
+                    # User has DMs disabled, that's okay
+                    pass
+                except Exception as e:
+                    logger.error(f"Failed to send warning clear DM to {user.display_name}: {e}")
+                
+            except Exception as e:
+                error_embed = EmbedViews.error_embed(f"Failed to clear warnings: {str(e)}")
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(embed=error_embed, ephemeral=True)
+                else:
+                    await ctx.send(embed=error_embed)
+
         # Store references to prevent garbage collection
         self.debug_command = debug_command
         self.test_owner_command = test_owner_command
@@ -740,4 +979,7 @@ class CommandsController:
         self.stats_command = stats_command 
         self.db_status_command = db_status_command
         self.nsfwban_command = nsfwban_command
-        self.nsfwunban_command = nsfwunban_command 
+        self.nsfwunban_command = nsfwunban_command
+        self.warn_command = warn_command
+        self.warnings_command = warnings_command
+        self.clearwarnings_command = clearwarnings_command 
