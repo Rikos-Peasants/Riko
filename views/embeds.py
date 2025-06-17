@@ -208,7 +208,7 @@ class EmbedViews:
             title=title,
             description=f"**{user.display_name}** has received warning #{warning_count}",
             color=color,
-            timestamp=datetime.utcnow()
+            timestamp=discord.utils.utcnow()
         )
         
         embed.add_field(name="👤 User", value=f"{user.mention} ({user.id})", inline=True)
@@ -243,7 +243,7 @@ class EmbedViews:
             title=f"📋 Warnings for {user.display_name}",
             description=f"Showing recent warnings ({len(warnings)} of {total_count} total)",
             color=discord.Color.blue(),
-            timestamp=datetime.utcnow()
+            timestamp=discord.utils.utcnow()
         )
         
         embed.add_field(name="👤 User", value=f"{user.mention} ({user.id})", inline=True)
@@ -281,7 +281,7 @@ class EmbedViews:
             title="🧹 Warnings Cleared",
             description=f"All warnings have been cleared for **{user.display_name}**",
             color=discord.Color.green(),
-            timestamp=datetime.utcnow()
+            timestamp=discord.utils.utcnow()
         )
         
         embed.add_field(name="👤 User", value=f"{user.mention} ({user.id})", inline=True)

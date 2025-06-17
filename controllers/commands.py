@@ -804,13 +804,13 @@ class CommandsController:
                 # Apply automatic escalation
                 try:
                     if action == "timeout_1h":
-                        timeout_until = datetime.utcnow() + timedelta(hours=1)
+                        timeout_until = discord.utils.utcnow() + timedelta(hours=1)
                         await user.timeout(timeout_until, reason=f"Automated warning escalation: {reason}")
                     elif action == "timeout_4h":
-                        timeout_until = datetime.utcnow() + timedelta(hours=4)
+                        timeout_until = discord.utils.utcnow() + timedelta(hours=4)
                         await user.timeout(timeout_until, reason=f"Automated warning escalation: {reason}")
                     elif action == "timeout_1w":
-                        timeout_until = datetime.utcnow() + timedelta(weeks=1)
+                        timeout_until = discord.utils.utcnow() + timedelta(weeks=1)
                         await user.timeout(timeout_until, reason=f"Automated warning escalation: {reason}")
                     elif action == "kick":
                         await user.kick(reason=f"Automated warning escalation (5th warning): {reason}")
@@ -841,7 +841,7 @@ class CommandsController:
                             title="⚠️ You have been warned",
                             description=f"You have received a warning in **{ctx.guild.name}**.",
                             color=discord.Color.orange(),
-                            timestamp=datetime.utcnow()
+                            timestamp=discord.utils.utcnow()
                         )
                         dm_embed.add_field(name="📝 Reason", value=reason, inline=False)
                         dm_embed.add_field(name="⚠️ Warning Count", value=f"{warning_count}/5", inline=True)
@@ -948,7 +948,7 @@ class CommandsController:
                         title="🧹 Your warnings have been cleared",
                         description=f"All your warnings in **{ctx.guild.name}** have been cleared by a moderator.",
                         color=discord.Color.green(),
-                        timestamp=datetime.utcnow()
+                        timestamp=discord.utils.utcnow()
                     )
                     dm_embed.add_field(name="👮 Cleared by", value=ctx.author.display_name, inline=True)
                     dm_embed.add_field(name="📊 Warnings Cleared", value=str(cleared_count), inline=True)
