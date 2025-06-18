@@ -1,6 +1,7 @@
 import discord
 from discord.ext import commands
 from models.role_manager import RoleManager
+from models.quest_manager import QuestManager
 from views.embeds import EmbedViews
 from config import Config
 import logging
@@ -13,6 +14,7 @@ class EventsController:
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.spam_channel_message_count = 0  # Track messages in spam channel
+        self.quest_manager = None  # Will be initialized when bot is ready
     
     def register_events(self):
         """Register all Discord events"""
@@ -185,6 +187,9 @@ class EventsController:
                     user_name=message.author.display_name,
                     initial_score=0  # Start with 0, will be updated when reactions happen
                 )
+                
+                # Update quest progress and check achievements
+                await self._update_quest_progress_and_achievements(message.author, message)
                 
             except discord.Forbidden:
                 logger.error(f"Missing permission to add reactions in {message.channel.name}")
@@ -386,5 +391,116 @@ class EventsController:
                 thumbs_down=thumbs_down
             )
             
+            # Update quest progress for earning likes (for image author)
+            if str(reaction.emoji) == '👍' and added:
+                await self._update_quest_progress_likes(message.author)
+            
+            # Update quest progress for rating images (for the person who reacted)
+            await self._update_quest_progress_rating(user)
+            
             action = "added" if added else "removed"
-            logger.debug(f"Reaction {action}: {reaction.emoji} on {message.author.display_name}'s image (score change: {score_change:+d})") 
+            logger.debug(f"Reaction {action}: {reaction.emoji} on {message.author.display_name}'s image (score change: {score_change:+d})")
+    
+    def initialize_quest_manager(self):
+        """Initialize the quest manager (called from bot.py when ready)"""
+        try:
+            self.quest_manager = QuestManager()
+            logger.info("Quest Manager initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize Quest Manager: {e}")
+    
+    async def _update_quest_progress_and_achievements(self, user: discord.User, message: discord.Message):
+        """Update quest progress and check achievements when user posts an image"""
+        if not self.quest_manager:
+            return
+            
+        try:
+            # Update quest progress for posting images
+            completed_quests = await self.quest_manager.update_quest_progress(
+                user_id=user.id,
+                quest_type="post_images",
+                count=1
+            )
+            
+            # Send notifications for completed quests
+            for quest in completed_quests:
+                try:
+                    embed = EmbedViews.quest_completed_embed(quest)
+                    await user.send(embed=embed)
+                except discord.Forbidden:
+                    # User has DMs disabled
+                    pass
+            
+            # Check for new achievements
+            new_achievements = await self.quest_manager.check_achievements(
+                user_id=user.id,
+                leaderboard_manager=self.bot.leaderboard_manager
+            )
+            
+            # Send notifications for new achievements
+            for achievement in new_achievements:
+                try:
+                    embed = EmbedViews.achievement_earned_embed(achievement)
+                    await user.send(embed=embed)
+                except discord.Forbidden:
+                    # User has DMs disabled
+                    pass
+            
+            # Add to active events as contestant
+            await self.quest_manager.add_event_contestant(
+                message_id=str(message.id),
+                user_id=user.id,
+                user_name=user.display_name
+            )
+            
+        except Exception as e:
+            logger.error(f"Error updating quest progress and achievements: {e}")
+    
+    async def _update_quest_progress_likes(self, user: discord.User):
+        """Update quest progress for earning likes"""
+        if not self.quest_manager:
+            return
+            
+        try:
+            completed_quests = await self.quest_manager.update_quest_progress(
+                user_id=user.id,
+                quest_type="earn_likes",
+                count=1
+            )
+            
+            # Send notifications for completed quests
+            for quest in completed_quests:
+                try:
+                    embed = EmbedViews.quest_completed_embed(quest)
+                    await user.send(embed=embed)
+                except discord.Forbidden:
+                    pass
+                    
+        except Exception as e:
+            logger.error(f"Error updating quest progress for likes: {e}")
+    
+    async def _update_quest_progress_rating(self, user: discord.User):
+        """Update quest progress for rating images"""
+        if not self.quest_manager or user.bot:
+            return
+            
+        try:
+            # Update the stat for tracking achievements
+            await self.quest_manager.update_user_stat(user.id, "ratings_given", 1)
+            
+            completed_quests = await self.quest_manager.update_quest_progress(
+                user_id=user.id,
+                quest_type="rate_images",
+                count=1
+            )
+            
+            # Send notifications for completed quests
+            for quest in completed_quests:
+                try:
+                    embed = EmbedViews.quest_completed_embed(quest)
+                    await user.send(embed=embed)
+                except discord.Forbidden:
+                    pass
+                    
+        except Exception as e:
+            logger.error(f"Error updating quest progress for rating: {e}") 

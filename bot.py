@@ -128,6 +128,10 @@ class RikoBot(commands.Bot):
         if not self.cycle_status.is_running():
             self.cycle_status.start()
         
+        # Initialize quest manager in events controller
+        self.events_controller.initialize_quest_manager()
+        logger.info("Quest manager initialized")
+        
         # Start scheduler tasks for best image posting
         self.scheduler_controller.start_tasks()
         logger.info("Started scheduled tasks for best image posting")

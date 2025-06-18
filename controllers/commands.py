@@ -1005,6 +1005,200 @@ class CommandsController:
                 else:
                     await ctx.send(embed=error_embed)
 
+        @self.bot.hybrid_command(name="quests", description="View your daily quests")
+        async def quests_command(ctx):
+            """View or generate daily quests for the user"""
+            try:
+                # Check if quest manager is available
+                if not hasattr(self.bot, 'events_controller') or not self.bot.events_controller.quest_manager:
+                    error_embed = EmbedViews.error_embed("Quest system is not available at the moment.")
+                    await ctx.send(embed=error_embed, ephemeral=True)
+                    return
+                
+                quest_manager = self.bot.events_controller.quest_manager
+                user_id = ctx.author.id
+                
+                # Get or generate daily quests
+                quests = await quest_manager.get_user_daily_quests(user_id)
+                if not quests:
+                    quests = await quest_manager.generate_daily_quests(user_id)
+                
+                # Create and send embed
+                embed = EmbedViews.daily_quests_embed(quests, ctx.author.display_name)
+                await ctx.send(embed=embed)
+                
+            except Exception as e:
+                logger.error(f"Error in quests command: {e}")
+                error_embed = EmbedViews.error_embed(f"Failed to get quests: {str(e)}")
+                await ctx.send(embed=error_embed, ephemeral=True)
+        
+        @self.bot.hybrid_command(name="achievements", description="View your achievements")
+        async def achievements_command(ctx, user: discord.Member = None):
+            """View achievements for yourself or another user"""
+            try:
+                # Check if quest manager is available
+                if not hasattr(self.bot, 'events_controller') or not self.bot.events_controller.quest_manager:
+                    error_embed = EmbedViews.error_embed("Achievement system is not available at the moment.")
+                    await ctx.send(embed=error_embed, ephemeral=True)
+                    return
+                
+                quest_manager = self.bot.events_controller.quest_manager
+                target_user = user or ctx.author
+                
+                # Get user achievements
+                achievements = await quest_manager.get_user_achievements(target_user.id)
+                
+                # Create and send embed
+                embed = EmbedViews.achievements_embed(achievements, target_user.display_name)
+                await ctx.send(embed=embed)
+                
+            except Exception as e:
+                logger.error(f"Error in achievements command: {e}")
+                error_embed = EmbedViews.error_embed(f"Failed to get achievements: {str(e)}")
+                await ctx.send(embed=error_embed, ephemeral=True)
+        
+        @self.bot.hybrid_command(name="events", description="View active image contest events")
+        async def events_command(ctx):
+            """View all active image contest events"""
+            try:
+                # Check if quest manager is available
+                if not hasattr(self.bot, 'events_controller') or not self.bot.events_controller.quest_manager:
+                    error_embed = EmbedViews.error_embed("Events system is not available at the moment.")
+                    await ctx.send(embed=error_embed, ephemeral=True)
+                    return
+                
+                quest_manager = self.bot.events_controller.quest_manager
+                
+                # Get active events
+                events = await quest_manager.get_active_events()
+                
+                # Create and send embed
+                embed = EmbedViews.active_events_embed(events)
+                await ctx.send(embed=embed)
+                
+            except Exception as e:
+                logger.error(f"Error in events command: {e}")
+                error_embed = EmbedViews.error_embed(f"Failed to get events: {str(e)}")
+                await ctx.send(embed=error_embed, ephemeral=True)
+        
+        @self.bot.hybrid_command(name="createevent", description="Create a new image contest event (Bot owners only)")
+        @commands.is_owner()
+        async def create_event_command(ctx, name: str, description: str, duration_hours: int = 24):
+            """Create a new image contest event"""
+            try:
+                # Check if quest manager is available
+                if not hasattr(self.bot, 'events_controller') or not self.bot.events_controller.quest_manager:
+                    error_embed = EmbedViews.error_embed("Events system is not available at the moment.")
+                    await ctx.send(embed=error_embed, ephemeral=True)
+                    return
+                
+                # Validate inputs
+                if len(name) > 100:
+                    error_embed = EmbedViews.error_embed("Event name must be 100 characters or less.")
+                    await ctx.send(embed=error_embed, ephemeral=True)
+                    return
+                
+                if len(description) > 500:
+                    error_embed = EmbedViews.error_embed("Event description must be 500 characters or less.")
+                    await ctx.send(embed=error_embed, ephemeral=True)
+                    return
+                
+                if duration_hours < 1 or duration_hours > 168:  # Max 1 week
+                    error_embed = EmbedViews.error_embed("Duration must be between 1 and 168 hours (1 week).")
+                    await ctx.send(embed=error_embed, ephemeral=True)
+                    return
+                
+                quest_manager = self.bot.events_controller.quest_manager
+                
+                # Calculate start and end dates
+                from datetime import datetime, timedelta
+                start_date = datetime.now()
+                end_date = start_date + timedelta(hours=duration_hours)
+                
+                # Create the event
+                event_id = await quest_manager.create_event(
+                    name=name,
+                    description=description,
+                    start_date=start_date,
+                    end_date=end_date,
+                    created_by_id=ctx.author.id,
+                    created_by_name=ctx.author.display_name
+                )
+                
+                if not event_id:
+                    error_embed = EmbedViews.error_embed("Failed to create event.")
+                    await ctx.send(embed=error_embed, ephemeral=True)
+                    return
+                
+                # Create event data for embed
+                event_data = {
+                    "name": name,
+                    "description": description,
+                    "start_date": start_date,
+                    "end_date": end_date,
+                    "created_by_name": ctx.author.display_name
+                }
+                
+                # Send success embed
+                embed = EmbedViews.event_created_embed(event_data)
+                await ctx.send(embed=embed)
+                
+                logger.info(f"Created event '{name}' by {ctx.author.display_name}")
+                
+            except Exception as e:
+                logger.error(f"Error in create event command: {e}")
+                error_embed = EmbedViews.error_embed(f"Failed to create event: {str(e)}")
+                await ctx.send(embed=error_embed, ephemeral=True)
+        
+        @self.bot.hybrid_command(name="endevent", description="End an active event and announce winner (Bot owners only)")
+        @commands.is_owner()
+        async def end_event_command(ctx, event_name: str):
+            """End an active event and announce the winner"""
+            try:
+                # Check if quest manager is available
+                if not hasattr(self.bot, 'events_controller') or not self.bot.events_controller.quest_manager:
+                    error_embed = EmbedViews.error_embed("Events system is not available at the moment.")
+                    await ctx.send(embed=error_embed, ephemeral=True)
+                    return
+                
+                quest_manager = self.bot.events_controller.quest_manager
+                
+                # Find the event by name
+                active_events = await quest_manager.get_active_events()
+                target_event = None
+                
+                for event in active_events:
+                    if event['name'].lower() == event_name.lower():
+                        target_event = event
+                        break
+                
+                if not target_event:
+                    error_embed = EmbedViews.error_embed(f"No active event found with name '{event_name}'")
+                    await ctx.send(embed=error_embed, ephemeral=True)
+                    return
+                
+                # End the event
+                result = await quest_manager.end_event(
+                    event_id=str(target_event['_id']),
+                    leaderboard_manager=self.bot.leaderboard_manager
+                )
+                
+                if not result:
+                    error_embed = EmbedViews.error_embed("Failed to end event.")
+                    await ctx.send(embed=error_embed, ephemeral=True)
+                    return
+                
+                # Send winner announcement
+                embed = EmbedViews.event_winner_embed(result['event'], result['winner'])
+                await ctx.send(embed=embed)
+                
+                logger.info(f"Ended event '{event_name}' by {ctx.author.display_name}")
+                
+            except Exception as e:
+                logger.error(f"Error in end event command: {e}")
+                error_embed = EmbedViews.error_embed(f"Failed to end event: {str(e)}")
+                await ctx.send(embed=error_embed, ephemeral=True)
+
         @self.bot.hybrid_command(name="setlogchannel", description="Set the channel for warning logs (Manage Server permission required)")
         @can_warn()
         async def setlogchannel_command(ctx, channel: discord.TextChannel = None):

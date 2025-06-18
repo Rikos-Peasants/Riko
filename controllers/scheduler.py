@@ -28,6 +28,9 @@ class SchedulerController:
         
         if not self.yearly_best_image.is_running():
             self.yearly_best_image.start()
+        
+        if not self.check_expired_events.is_running():
+            self.check_expired_events.start()
     
     def stop_tasks(self):
         """Stop all scheduled tasks"""
@@ -41,6 +44,9 @@ class SchedulerController:
         
         if self.yearly_best_image.is_running():
             self.yearly_best_image.cancel()
+        
+        if self.check_expired_events.is_running():
+            self.check_expired_events.cancel()
     
     @tasks.loop(hours=24)  # Check daily
     async def weekly_best_image(self):
@@ -187,6 +193,27 @@ class SchedulerController:
                 
                 await channel.send(embed=embed)
                 
+                # Award achievement if quest manager is available
+                if hasattr(self.bot, 'events_controller') and self.bot.events_controller.quest_manager:
+                    try:
+                        author_id = int(best_image['author_id'])
+                        achievement = await self.bot.events_controller.quest_manager.award_competition_achievement(
+                            user_id=author_id,
+                            user_name=best_image['author_name'],
+                            competition_type=period
+                        )
+                        if achievement:
+                            try:
+                                author = await self.bot.fetch_user(author_id)
+                                embed_achievement = EmbedViews.achievement_earned_embed(achievement)
+                                await author.send(embed=embed_achievement)
+                            except discord.Forbidden:
+                                pass
+                            except Exception as e:
+                                logger.error(f"Error sending achievement DM: {e}")
+                    except Exception as e:
+                        logger.error(f"Error awarding achievement: {e}")
+                
                 logger.info(f"Posted {period}ly best image in #{channel.name} by {best_image['author_name']} with {best_image['score']} net upvotes")
                 
         except Exception as e:
@@ -202,7 +229,57 @@ class SchedulerController:
         """Wait until the bot is ready before starting monthly task"""
         await self.bot.wait_until_ready()
     
+    @tasks.loop(hours=1)  # Check every hour
+    async def check_expired_events(self):
+        """Check for expired events and automatically end them"""
+        try:
+            # Check if quest manager is available
+            if not hasattr(self.bot, 'events_controller') or not self.bot.events_controller.quest_manager:
+                return
+            
+            quest_manager = self.bot.events_controller.quest_manager
+            now = datetime.now()
+            
+            # Find events that have expired but are still active
+            expired_events = list(quest_manager.events_collection.find({
+                "is_active": True,
+                "end_date": {"$lt": now}
+            }))
+            
+            for event in expired_events:
+                logger.info(f"Auto-ending expired event: {event['name']}")
+                
+                # End the event
+                result = await quest_manager.end_event(
+                    event_id=str(event['_id']),
+                    leaderboard_manager=self.bot.leaderboard_manager
+                )
+                
+                if result:
+                    # Find a channel to announce the winner
+                    guild = self.bot.get_guild(Config.GUILD_ID)
+                    if guild:
+                        # Try to use the first image channel for announcements
+                        for channel_id in Config.IMAGE_REACTION_CHANNELS:
+                            channel = guild.get_channel(channel_id)
+                            if channel:
+                                embed = EmbedViews.event_winner_embed(result['event'], result['winner'])
+                                await channel.send(embed=embed)
+                                break
+                    
+                    logger.info(f"Successfully ended expired event: {event['name']}")
+                else:
+                    logger.error(f"Failed to end expired event: {event['name']}")
+                    
+        except Exception as e:
+            logger.error(f"Error checking expired events: {e}")
+
     @yearly_best_image.before_loop
     async def before_yearly_task(self):
         """Wait until the bot is ready before starting yearly task"""
+        await self.bot.wait_until_ready()
+    
+    @check_expired_events.before_loop
+    async def before_expired_events_task(self):
+        """Wait until the bot is ready before starting expired events task"""
         await self.bot.wait_until_ready() 
