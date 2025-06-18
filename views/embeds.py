@@ -581,6 +581,126 @@ class EmbedViews:
         return embed
 
     @staticmethod
+    def streaks_embed(streaks: dict, user_name: str) -> discord.Embed:
+        """Create an embed for user streaks"""
+        embed = discord.Embed(
+            title="🔥 Streaks & Consistency",
+            description=f"**{user_name}'s** streak statistics",
+            color=discord.Color.orange(),
+            timestamp=datetime.utcnow()
+        )
+        
+        # Current streaks
+        current_post_streak = streaks.get("post_streak", 0)
+        current_quest_streak = streaks.get("quest_streak", 0)
+        
+        # Max streaks
+        max_post_streak = streaks.get("max_post_streak", 0)
+        max_quest_streak = streaks.get("max_quest_streak", 0)
+        
+        # Last dates
+        last_post_date = streaks.get("last_post_date")
+        last_quest_date = streaks.get("last_quest_date")
+        
+        # Current streaks section
+        embed.add_field(
+            name="📷 Current Post Streak",
+            value=f"**{current_post_streak}** {'day' if current_post_streak == 1 else 'days'}\n"
+                  f"Last post: {last_post_date or 'Never'}",
+            inline=True
+        )
+        
+        embed.add_field(
+            name="🎯 Current Quest Streak", 
+            value=f"**{current_quest_streak}** {'day' if current_quest_streak == 1 else 'days'}\n"
+                  f"Last quest: {last_quest_date or 'Never'}",
+            inline=True
+        )
+        
+        embed.add_field(name="‎", value="‎", inline=False)  # Spacer
+        
+        # Record streaks section
+        embed.add_field(
+            name="🏆 Best Post Streak",
+            value=f"**{max_post_streak}** {'day' if max_post_streak == 1 else 'days'}",
+            inline=True
+        )
+        
+        embed.add_field(
+            name="🏆 Best Quest Streak",
+            value=f"**{max_quest_streak}** {'day' if max_quest_streak == 1 else 'days'}",
+            inline=True
+        )
+        
+        embed.add_field(name="‎", value="‎", inline=False)  # Spacer
+        
+        # Tips section
+        tips = []
+        if current_post_streak == 0:
+            tips.append("📷 Post an image to start your posting streak!")
+        if current_quest_streak == 0:
+            tips.append("🎯 Complete a quest to start your quest streak!")
+        if current_post_streak > 0 and current_quest_streak > 0:
+            tips.append("🔥 Keep it up! Streaks unlock special achievements!")
+        
+        if tips:
+            embed.add_field(
+                name="💡 Tips",
+                value="\n".join(tips),
+                inline=False
+            )
+        
+        # Streak fire emoji based on longest current streak
+        max_current = max(current_post_streak, current_quest_streak)
+        if max_current >= 30:
+            embed.set_thumbnail(url="https://twemoji.maxcdn.com/v/13.1.0/72x72/1f525.png")  # 🔥
+        elif max_current >= 7:
+            embed.set_thumbnail(url="https://twemoji.maxcdn.com/v/13.1.0/72x72/2b50.png")  # ⭐
+        
+        embed.set_footer(text="Post images daily and complete quests to build streaks!")
+        
+        return embed
+
+    @staticmethod
+    def streak_milestone_embed(streak_type: str, streak_count: int, user_name: str) -> discord.Embed:
+        """Create an embed for streak milestones"""
+        if streak_type == "post_streak":
+            title = "📷 Posting Streak Milestone!"
+            description = f"**{user_name}** has posted images for **{streak_count}** days in a row!"
+            color = discord.Color.blue()
+            icon = "📷"
+        else:  # quest_streak
+            title = "🎯 Quest Streak Milestone!"
+            description = f"**{user_name}** has completed quests for **{streak_count}** days in a row!"
+            color = discord.Color.green()
+            icon = "🎯"
+        
+        embed = discord.Embed(
+            title=title,
+            description=description,
+            color=color,
+            timestamp=datetime.utcnow()
+        )
+        
+        # Add encouragement based on streak length
+        if streak_count >= 100:
+            encouragement = f"{icon} LEGENDARY STREAK! You're absolutely unstoppable!"
+        elif streak_count >= 30:
+            encouragement = f"{icon} Amazing dedication! Keep the momentum going!"
+        elif streak_count >= 7:
+            encouragement = f"{icon} Great consistency! A week of dedication!"
+        else:
+            encouragement = f"{icon} Nice streak! Keep it up!"
+        
+        embed.add_field(
+            name="🔥 Keep Going!",
+            value=encouragement,
+            inline=False
+        )
+        
+        return embed
+
+    @staticmethod
     def leaderboard_embed(leaderboard_data: list, period: str = "all time") -> discord.Embed:
         """Create an embed for the leaderboard"""
         embed = discord.Embed(

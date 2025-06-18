@@ -1057,6 +1057,31 @@ class CommandsController:
                 error_embed = EmbedViews.error_embed(f"Failed to get achievements: {str(e)}")
                 await ctx.send(embed=error_embed, ephemeral=True)
         
+        @self.bot.hybrid_command(name="streaks", description="View your streaks and consistency stats")
+        async def streaks_command(ctx, user: discord.Member = None):
+            """View streaks for yourself or another user"""
+            try:
+                # Check if quest manager is available
+                if not hasattr(self.bot, 'events_controller') or not self.bot.events_controller.quest_manager:
+                    error_embed = EmbedViews.error_embed("Streak system is not available at the moment.")
+                    await ctx.send(embed=error_embed, ephemeral=True)
+                    return
+                
+                quest_manager = self.bot.events_controller.quest_manager
+                target_user = user or ctx.author
+                
+                # Get user streaks
+                streaks = await quest_manager.get_user_streaks(target_user.id)
+                
+                # Create and send embed
+                embed = EmbedViews.streaks_embed(streaks, target_user.display_name)
+                await ctx.send(embed=embed)
+                
+            except Exception as e:
+                logger.error(f"Error in streaks command: {e}")
+                error_embed = EmbedViews.error_embed(f"Failed to get streaks: {str(e)}")
+                await ctx.send(embed=error_embed, ephemeral=True)
+        
         @self.bot.hybrid_command(name="events", description="View active image contest events")
         async def events_command(ctx):
             """View all active image contest events"""

@@ -1,8 +1,8 @@
-# Quest System, Achievements, and Events - Feature Documentation
+# Quest System, Achievements, Events, and Streaks - Feature Documentation
 
 ## Overview
 
-The Riko bot now includes a comprehensive quest system with daily quests, achievements, and timed events. This system gamifies the image sharing experience by rewarding users for posting images, earning likes, and rating content.
+The Riko bot now includes a comprehensive quest system with daily quests, achievements, timed events, and streak tracking. This system gamifies the image sharing experience by rewarding users for posting images, earning likes, rating content, and maintaining consistency.
 
 ## Features
 
@@ -54,6 +54,13 @@ Persistent achievements that can be earned over time:
 - **💫 Community Favorite**: Reach 500 total score (150 points)
 - **🌠 Hall of Fame**: Reach 1000 total score (300 points)
 
+#### Streak Achievements
+- **🔥 Week Warrior**: Complete quests for 7 days in a row (100 points)
+- **🌟 Monthly Dedication**: Complete quests for 30 days in a row (300 points)
+- **👑 Streak Master**: Complete quests for 100 days in a row (1000 points)
+- **📷 Daily Poster**: Post at least 1 image for 7 days in a row (75 points)
+- **🎬 Content Machine**: Post at least 1 image for 30 days in a row (250 points)
+
 #### Achievement Commands
 
 - **`/achievements` or `R!achievements`**: View your earned achievements
@@ -61,7 +68,30 @@ Persistent achievements that can be earned over time:
   - Displays total achievement count and points
   - Can view other users' achievements by mentioning them
 
-### 3. Events System
+### 3. Streak System 🔥
+
+Track your consistency with two types of streaks:
+
+#### Streak Types
+- **📷 Posting Streak**: Days in a row with at least 1 image posted
+- **🎯 Quest Streak**: Days in a row with at least 1 quest completed
+
+#### Streak Features
+- ✅ **Automatic Tracking**: Streaks update automatically when you post images or complete quests
+- ✅ **Personal Bests**: Track your longest streaks ever achieved
+- ✅ **Daily Reset**: Streaks reset at midnight if you miss a day
+- ✅ **Achievement Integration**: Long streaks unlock special achievements
+- ✅ **Visual Feedback**: Streak embeds show your progress and milestones
+
+#### Streak Commands
+
+- **`/streaks` or `R!streaks`**: View your streak statistics
+  - Shows current posting and quest streaks
+  - Displays your personal best records
+  - Provides tips for maintaining streaks
+  - Can view other users' streaks by mentioning them
+
+### 4. Events System
 
 Bot owners can create timed image contest events where users compete for the highest-scoring image.
 
@@ -91,14 +121,15 @@ Bot owners can create timed image contest events where users compete for the hig
 5. Winner announcement is posted in image channels
 6. Events automatically end when they expire (checked hourly)
 
-### 4. Automatic Progress Tracking
+### 5. Automatic Progress Tracking
 
 The system automatically tracks user progress:
 
 #### When Posting Images
 - ✅ Updates "post images" quest progress
+- ✅ Updates posting streak (consecutive days with posts)
 - ✅ Adds user to active events as contestant
-- ✅ Checks for new achievements
+- ✅ Checks for new achievements (including streak achievements)
 - ✅ Sends DM notifications for completed quests/achievements
 
 #### When Reacting to Images
@@ -106,15 +137,21 @@ The system automatically tracks user progress:
 - ✅ Updates "earn likes" quest progress for the image author (when receiving 👍)
 - ✅ Tracks rating statistics for achievements
 
+#### When Completing Quests
+- ✅ Updates quest completion streak (consecutive days with completed quests)
+- ✅ Checks for streak achievements
+- ✅ Sends streak milestone notifications
+
 #### When Winning Competitions
 - ✅ Awards competition achievements (Weekly Champion, Monthly Master, etc.)
 - ✅ Sends achievement notifications via DM
 
-### 5. Notifications
+### 6. Notifications
 
 Users receive private messages when:
 - 🎉 A daily quest is completed
 - 🏆 A new achievement is earned
+- 🔥 A streak milestone is reached (7, 30, 100+ days)
 - 🎯 They win a competition (week/month/year)
 
 All notifications are sent via DM and fail gracefully if the user has DMs disabled.
@@ -130,6 +167,7 @@ The quest system uses MongoDB with the following collections:
 - `user_quests`: Individual user daily quests
 - `user_achievements`: User-earned achievements
 - `user_quest_stats`: User statistics for achievement tracking
+- `user_streaks`: User streak tracking (post streaks, quest streaks, records)
 
 ### Indexing
 Proper MongoDB indexing ensures fast queries:
@@ -145,10 +183,10 @@ The quest system integrates with existing bot configuration:
 Uses `Config.IMAGE_REACTION_CHANNELS` to determine where to track image posts and reactions.
 
 ### Guild Restriction
-All quest/achievement/event functionality is restricted to the configured guild (`Config.GUILD_ID`).
+All quest/achievement/event/streak functionality is restricted to the configured guild (`Config.GUILD_ID`).
 
 ### Permissions
-- Quest/achievement viewing: All users
+- Quest/achievement/streak viewing: All users
 - Event viewing: All users
 - Event creation/management: Bot owners only (`@commands.is_owner()`)
 
@@ -158,6 +196,7 @@ The system includes comprehensive error handling:
 - Database connection failures are logged and handled gracefully
 - DM failures (blocked users) are handled silently
 - Invalid event operations return user-friendly error messages
+- Streak calculations handle edge cases (timezone changes, etc.)
 - All errors are logged for debugging
 
 ## Performance Considerations
@@ -165,18 +204,28 @@ The system includes comprehensive error handling:
 - Quest progress is batched and updated efficiently
 - Achievement checking is done only when relevant (after posting images)
 - Event contestant tracking avoids duplicates
+- Streak updates are optimized for daily operations
 - Database queries use proper indexing
-- Automatic cleanup of expired events
+- Automatic cleanup of expired events and broken streaks
 
 ## Usage Examples
 
 ### Daily Workflow
 1. User runs `/quests` to see their daily objectives
-2. User posts images → automatically progresses "post images" quests
-3. User reacts to others' images → progresses "rate images" quests
-4. User receives likes → progresses "earn likes" quests
-5. Completed quests send congratulatory DMs
-6. System checks for new achievements and notifies user
+2. User runs `/streaks` to check their current streaks
+3. User posts images → automatically progresses "post images" quests and posting streak
+4. User reacts to others' images → progresses "rate images" quests
+5. User receives likes → progresses "earn likes" quests
+6. Completed quests send congratulatory DMs and update quest streak
+7. System checks for new achievements and notifies user
+
+### Streak Building
+1. User posts first image → starts 1-day posting streak
+2. User completes first quest → starts 1-day quest streak
+3. Next day: User posts again → extends posting streak to 2 days
+4. User completes quest → extends quest streak to 2 days
+5. After 7 days → unlocks "Week Warrior" and "Daily Poster" achievements
+6. Miss a day → streak resets to 0, start over
 
 ### Event Workflow
 1. Bot owner creates event: `/createevent "Photo Contest" "Best photos win!" 24`
@@ -193,6 +242,19 @@ The system includes comprehensive error handling:
 4. User receives DM notification with achievement details
 5. Achievement appears in their `/achievements` list
 
+## Streak Strategies
+
+### Maintaining Streaks
+- **Set Daily Reminders**: Post at least one image and complete one quest daily
+- **Use Multiple Quests**: Complete easier quests early to secure your quest streak
+- **Plan Ahead**: Prepare content for busy days
+- **Check Progress**: Use `/streaks` to monitor your current status
+
+### Streak Recovery
+- **Don't Give Up**: If you break a streak, start immediately the next day
+- **Learn Patterns**: Identify when you're most likely to forget
+- **Build Habits**: Make posting and questing part of your daily routine
+
 ## Future Enhancements
 
 Potential future additions:
@@ -200,4 +262,7 @@ Potential future additions:
 - Seasonal events with special themes
 - Achievement badges in user profiles
 - Quest point shop/rewards system
-- Streak tracking for consecutive daily quest completion 
+- Streak freeze items (skip a day without breaking)
+- Team/guild streaks and competitions
+- Streak leaderboards and hall of fame
+- Notification preferences for different milestone types 

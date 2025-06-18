@@ -31,6 +31,9 @@ class SchedulerController:
         
         if not self.check_expired_events.is_running():
             self.check_expired_events.start()
+        
+        if not self.check_streaks.is_running():
+            self.check_streaks.start()
     
     def stop_tasks(self):
         """Stop all scheduled tasks"""
@@ -47,6 +50,9 @@ class SchedulerController:
         
         if self.check_expired_events.is_running():
             self.check_expired_events.cancel()
+        
+        if self.check_streaks.is_running():
+            self.check_streaks.cancel()
     
     @tasks.loop(hours=24)  # Check daily
     async def weekly_best_image(self):
@@ -282,4 +288,26 @@ class SchedulerController:
     @check_expired_events.before_loop
     async def before_expired_events_task(self):
         """Wait until the bot is ready before starting expired events task"""
+        await self.bot.wait_until_ready()
+    
+    @tasks.loop(hours=24)  # Check daily at midnight
+    async def check_streaks(self):
+        """Check and update user streaks daily"""
+        try:
+            # Check if quest manager is available
+            if not hasattr(self.bot, 'events_controller') or not self.bot.events_controller.quest_manager:
+                return
+            
+            quest_manager = self.bot.events_controller.quest_manager
+            
+            # Check for broken streaks
+            await quest_manager.check_and_break_streaks()
+            logger.info("Daily streak check completed")
+            
+        except Exception as e:
+            logger.error(f"Error in daily streak check: {e}")
+    
+    @check_streaks.before_loop
+    async def before_streaks_task(self):
+        """Wait until the bot is ready before starting streaks task"""
         await self.bot.wait_until_ready() 

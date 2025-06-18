@@ -422,6 +422,9 @@ class EventsController:
                 count=1
             )
             
+            # Update posting streak
+            post_streak = await self.quest_manager.update_post_streak(user.id)
+            
             # Send notifications for completed quests
             for quest in completed_quests:
                 try:
@@ -431,7 +434,7 @@ class EventsController:
                     # User has DMs disabled
                     pass
             
-            # Check for new achievements
+            # Check for new achievements (including streak achievements)
             new_achievements = await self.quest_manager.check_achievements(
                 user_id=user.id,
                 leaderboard_manager=self.bot.leaderboard_manager

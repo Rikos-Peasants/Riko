@@ -9,7 +9,7 @@ import random
 logger = logging.getLogger(__name__)
 
 class QuestManager:
-    """Manages daily quests, achievements, and events system"""
+    """Manages daily quests, achievements, events, and streaks system"""
     
     def __init__(self, connection_url: str = None, database_name: str = "Riko"):
         # Import here to avoid circular imports
@@ -25,6 +25,7 @@ class QuestManager:
         self.user_quests_collection = None
         self.user_achievements_collection = None
         self.user_stats_collection = None
+        self.user_streaks_collection = None
         self._connect()
         self._initialize_quests_and_achievements()
     
@@ -43,6 +44,7 @@ class QuestManager:
             self.user_quests_collection = self.db['user_quests']
             self.user_achievements_collection = self.db['user_achievements']
             self.user_stats_collection = self.db['user_quest_stats']
+            self.user_streaks_collection = self.db['user_streaks']
             
             # Create indexes
             self.quests_collection.create_index([("quest_type", 1), ("is_daily", 1)])
@@ -51,6 +53,7 @@ class QuestManager:
             self.user_quests_collection.create_index([("user_id", 1), ("date", -1)])
             self.user_achievements_collection.create_index([("user_id", 1), ("achievement_id", 1)], unique=True)
             self.user_stats_collection.create_index([("user_id", 1)], unique=True)
+            self.user_streaks_collection.create_index([("user_id", 1)], unique=True)
             
             logger.info(f"Connected to MongoDB for Quest Manager")
             
@@ -218,6 +221,52 @@ class QuestManager:
                 "target_count": 1000,
                 "reward_points": 300,
                 "icon": "🌠"
+            },
+            # Streak Achievements
+            {
+                "achievement_id": "streak_7",
+                "name": "Week Warrior",
+                "description": "Complete quests for 7 days in a row",
+                "achievement_type": "quest_streak",
+                "target_count": 7,
+                "reward_points": 100,
+                "icon": "🔥"
+            },
+            {
+                "achievement_id": "streak_30",
+                "name": "Monthly Dedication",
+                "description": "Complete quests for 30 days in a row",
+                "achievement_type": "quest_streak",
+                "target_count": 30,
+                "reward_points": 300,
+                "icon": "🌟"
+            },
+            {
+                "achievement_id": "streak_100",
+                "name": "Streak Master",
+                "description": "Complete quests for 100 days in a row",
+                "achievement_type": "quest_streak",
+                "target_count": 100,
+                "reward_points": 1000,
+                "icon": "👑"
+            },
+            {
+                "achievement_id": "post_streak_7",
+                "name": "Daily Poster",
+                "description": "Post at least 1 image for 7 days in a row",
+                "achievement_type": "post_streak",
+                "target_count": 7,
+                "reward_points": 75,
+                "icon": "📷"
+            },
+            {
+                "achievement_id": "post_streak_30",
+                "name": "Content Machine",
+                "description": "Post at least 1 image for 30 days in a row",
+                "achievement_type": "post_streak",
+                "target_count": 30,
+                "reward_points": 250,
+                "icon": "🎬"
             }
         ]
         
@@ -326,6 +375,10 @@ class QuestManager:
                     )
                     completed_quests.append(quest)
             
+            # Update streak if any quest was completed
+            if completed_quests:
+                await self._update_quest_streak(user_id)
+            
             return completed_quests
             
         except Exception as e:
@@ -365,6 +418,12 @@ class QuestManager:
                 elif achievement["achievement_type"] == "rate_images":
                     rating_count = await self.get_user_stat(user_id, "ratings_given")
                     earned = rating_count >= achievement["target_count"]
+                elif achievement["achievement_type"] == "quest_streak":
+                    current_streak = await self.get_user_streak(user_id, "quest_streak")
+                    earned = current_streak >= achievement["target_count"]
+                elif achievement["achievement_type"] == "post_streak":
+                    current_streak = await self.get_user_streak(user_id, "post_streak")
+                    earned = current_streak >= achievement["target_count"]
                 
                 if earned:
                     # Award achievement
@@ -550,9 +609,9 @@ class QuestManager:
             if doc:
                 return doc.get(stat_type, 0)
             return 0
-                 except Exception as e:
-             logger.error(f"Error getting user stat: {e}")
-             return 0
+        except Exception as e:
+            logger.error(f"Error getting user stat: {e}")
+            return 0
     
     async def award_competition_achievement(self, user_id: int, user_name: str, competition_type: str):
         """Award a competition achievement to a user"""
@@ -590,4 +649,252 @@ class QuestManager:
             
         except Exception as e:
             logger.error(f"Error awarding competition achievement: {e}")
-            return None 
+            return None
+    
+    # ==================== STREAK SYSTEM ====================
+    
+    async def update_post_streak(self, user_id: int):
+        """Update posting streak for a user"""
+        try:
+            today = datetime.now().date()
+            yesterday = today - timedelta(days=1)
+            
+            # Get or create streak record
+            streak_doc = self.user_streaks_collection.find_one({"user_id": str(user_id)})
+            
+            if not streak_doc:
+                # First time posting
+                streak_doc = {
+                    "user_id": str(user_id),
+                    "post_streak": 1,
+                    "quest_streak": 0,
+                    "last_post_date": today.isoformat(),
+                    "last_quest_date": None,
+                    "max_post_streak": 1,
+                    "max_quest_streak": 0,
+                    "created_at": datetime.now(),
+                    "updated_at": datetime.now()
+                }
+                self.user_streaks_collection.insert_one(streak_doc)
+                logger.info(f"Started post streak for user {user_id}")
+                return 1
+            
+            last_post_date = datetime.fromisoformat(streak_doc["last_post_date"]).date()
+            
+            if last_post_date == today:
+                # Already posted today, no change
+                return streak_doc["post_streak"]
+            elif last_post_date == yesterday:
+                # Continuing streak
+                new_streak = streak_doc["post_streak"] + 1
+                max_streak = max(new_streak, streak_doc.get("max_post_streak", 0))
+                
+                self.user_streaks_collection.update_one(
+                    {"user_id": str(user_id)},
+                    {
+                        "$set": {
+                            "post_streak": new_streak,
+                            "last_post_date": today.isoformat(),
+                            "max_post_streak": max_streak,
+                            "updated_at": datetime.now()
+                        }
+                    }
+                )
+                logger.info(f"Extended post streak for user {user_id} to {new_streak} days")
+                return new_streak
+            else:
+                # Streak broken, restart
+                self.user_streaks_collection.update_one(
+                    {"user_id": str(user_id)},
+                    {
+                        "$set": {
+                            "post_streak": 1,
+                            "last_post_date": today.isoformat(),
+                            "updated_at": datetime.now()
+                        }
+                    }
+                )
+                logger.info(f"Post streak broken for user {user_id}, restarted at 1")
+                return 1
+                
+        except Exception as e:
+            logger.error(f"Error updating post streak: {e}")
+            return 0
+    
+    async def _update_quest_streak(self, user_id: int):
+        """Update quest completion streak for a user (internal method)"""
+        try:
+            today = datetime.now().date()
+            yesterday = today - timedelta(days=1)
+            
+            # Check if user completed any quest today
+            today_quests = list(self.user_quests_collection.find({
+                "user_id": str(user_id),
+                "date": today.isoformat(),
+                "completed": True
+            }))
+            
+            if not today_quests:
+                return  # No completed quests today
+            
+            # Get or create streak record
+            streak_doc = self.user_streaks_collection.find_one({"user_id": str(user_id)})
+            
+            if not streak_doc:
+                # First time completing quest
+                streak_doc = {
+                    "user_id": str(user_id),
+                    "post_streak": 0,
+                    "quest_streak": 1,
+                    "last_post_date": None,
+                    "last_quest_date": today.isoformat(),
+                    "max_post_streak": 0,
+                    "max_quest_streak": 1,
+                    "created_at": datetime.now(),
+                    "updated_at": datetime.now()
+                }
+                self.user_streaks_collection.insert_one(streak_doc)
+                logger.info(f"Started quest streak for user {user_id}")
+                return 1
+            
+            # Check if already updated today
+            last_quest_date_str = streak_doc.get("last_quest_date")
+            if last_quest_date_str:
+                last_quest_date = datetime.fromisoformat(last_quest_date_str).date()
+                if last_quest_date == today:
+                    return streak_doc["quest_streak"]  # Already counted today
+                elif last_quest_date == yesterday:
+                    # Continuing streak
+                    new_streak = streak_doc["quest_streak"] + 1
+                    max_streak = max(new_streak, streak_doc.get("max_quest_streak", 0))
+                    
+                    self.user_streaks_collection.update_one(
+                        {"user_id": str(user_id)},
+                        {
+                            "$set": {
+                                "quest_streak": new_streak,
+                                "last_quest_date": today.isoformat(),
+                                "max_quest_streak": max_streak,
+                                "updated_at": datetime.now()
+                            }
+                        }
+                    )
+                    logger.info(f"Extended quest streak for user {user_id} to {new_streak} days")
+                    return new_streak
+                else:
+                    # Streak broken, restart
+                    self.user_streaks_collection.update_one(
+                        {"user_id": str(user_id)},
+                        {
+                            "$set": {
+                                "quest_streak": 1,
+                                "last_quest_date": today.isoformat(),
+                                "updated_at": datetime.now()
+                            }
+                        }
+                    )
+                    logger.info(f"Quest streak broken for user {user_id}, restarted at 1")
+                    return 1
+            else:
+                # First quest completion
+                self.user_streaks_collection.update_one(
+                    {"user_id": str(user_id)},
+                    {
+                        "$set": {
+                            "quest_streak": 1,
+                            "last_quest_date": today.isoformat(),
+                            "max_quest_streak": max(1, streak_doc.get("max_quest_streak", 0)),
+                            "updated_at": datetime.now()
+                        }
+                    }
+                )
+                logger.info(f"Started quest streak for user {user_id}")
+                return 1
+                
+        except Exception as e:
+            logger.error(f"Error updating quest streak: {e}")
+            return 0
+    
+    async def get_user_streak(self, user_id: int, streak_type: str) -> int:
+        """Get current streak for a user"""
+        try:
+            streak_doc = self.user_streaks_collection.find_one({"user_id": str(user_id)})
+            if not streak_doc:
+                return 0
+            return streak_doc.get(streak_type, 0)
+        except Exception as e:
+            logger.error(f"Error getting user streak: {e}")
+            return 0
+    
+    async def get_user_streaks(self, user_id: int) -> Dict:
+        """Get all streak information for a user"""
+        try:
+            streak_doc = self.user_streaks_collection.find_one({"user_id": str(user_id)})
+            if not streak_doc:
+                return {
+                    "post_streak": 0,
+                    "quest_streak": 0,
+                    "max_post_streak": 0,
+                    "max_quest_streak": 0,
+                    "last_post_date": None,
+                    "last_quest_date": None
+                }
+            
+            return {
+                "post_streak": streak_doc.get("post_streak", 0),
+                "quest_streak": streak_doc.get("quest_streak", 0),
+                "max_post_streak": streak_doc.get("max_post_streak", 0),
+                "max_quest_streak": streak_doc.get("max_quest_streak", 0),
+                "last_post_date": streak_doc.get("last_post_date"),
+                "last_quest_date": streak_doc.get("last_quest_date")
+            }
+        except Exception as e:
+            logger.error(f"Error getting user streaks: {e}")
+            return {}
+    
+    async def check_and_break_streaks(self):
+        """Check all users for broken streaks (called daily by scheduler)"""
+        try:
+            today = datetime.now().date()
+            yesterday = today - timedelta(days=1)
+            
+            # Find all users with active streaks
+            active_streaks = list(self.user_streaks_collection.find({
+                "$or": [
+                    {"post_streak": {"$gt": 0}},
+                    {"quest_streak": {"$gt": 0}}
+                ]
+            }))
+            
+            for streak_doc in active_streaks:
+                user_id = streak_doc["user_id"]
+                updates = {}
+                
+                # Check post streak
+                if streak_doc.get("post_streak", 0) > 0:
+                    last_post_date_str = streak_doc.get("last_post_date")
+                    if last_post_date_str:
+                        last_post_date = datetime.fromisoformat(last_post_date_str).date()
+                        if last_post_date < yesterday:
+                            updates["post_streak"] = 0
+                            logger.info(f"Broke post streak for user {user_id}")
+                
+                # Check quest streak
+                if streak_doc.get("quest_streak", 0) > 0:
+                    last_quest_date_str = streak_doc.get("last_quest_date")
+                    if last_quest_date_str:
+                        last_quest_date = datetime.fromisoformat(last_quest_date_str).date()
+                        if last_quest_date < yesterday:
+                            updates["quest_streak"] = 0
+                            logger.info(f"Broke quest streak for user {user_id}")
+                
+                # Apply updates if any
+                if updates:
+                    updates["updated_at"] = datetime.now()
+                    self.user_streaks_collection.update_one(
+                        {"user_id": user_id},
+                        {"$set": updates}
+                    )
+                    
+        except Exception as e:
+            logger.error(f"Error checking and breaking streaks: {e}") 
