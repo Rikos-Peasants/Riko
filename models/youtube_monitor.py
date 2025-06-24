@@ -473,9 +473,9 @@ class YouTubeMonitor:
             # Create context-aware prompt
             channel_context = ""
             if is_rayen_channel:
-                channel_context = "This video is from Rayen's channel. Rayen is Riko's human collaborator who often appears in videos with her or helps with technical aspects."
+                channel_context = "This video is from Rayen's channel. Rayen is Riko's human collaborator."
             else:
-                channel_context = "This video is from Riko's channel. Focus on Riko as the main content creator."
+                channel_context = "This video is from Riko's channel."
             
             # Create the content with video attachment
             contents = [
@@ -490,12 +490,21 @@ class YouTubeMonitor:
                         ),
                         types.Part.from_text(
                             text=f"""New video uploaded!
-Title: {video_title}
-Author: {video_author}
-Description: {video_description[:200]}...
-Channel Context: {channel_context}
 
-Please create a short video announcement (10-20 words) for this video. Use the video content to create a warm but playfully exasperated announcement that fits Ino's character. Remember to include the role ping <@&1375737416325009552> at the end."""
+TITLE: {video_title}
+UPLOADER/CREATOR: {video_author}
+FULL DESCRIPTION: {video_description}
+CHANNEL: {channel_context}
+
+IMPORTANT: Pay close attention to the UPLOADER/CREATOR name and video content. This might be:
+- Content BY Riko herself
+- Content BY Rayen 
+- A COVER or COLLABORATION by someone else (like "{video_author}")
+- Guest content on the channel
+
+Create a short video announcement (10-20 words) that accurately reflects WHO created this content and WHAT it is. Use the video title, description, and creator name to understand the context. Don't assume it's always Riko or Rayen - acknowledge the actual creator when it's someone else.
+
+Remember to include the role ping <@&1375737416325009552> at the end."""
                         ),
                     ],
                 ),
@@ -522,7 +531,7 @@ Please create a short video announcement (10-20 words) for this video. Use the v
             else:
                 # Fallback to context-aware template
                 logger.info("Using fallback Ino response template")
-                return self._get_fallback_response(video_title, is_rayen_channel)
+                return self._get_fallback_response(video_title, is_rayen_channel, video_author)
             
         except Exception as e:
             logger.error(f"Error generating Ino response: {e}")
@@ -530,11 +539,21 @@ Please create a short video announcement (10-20 words) for this video. Use the v
             channel_id = video.get('config', {}).get('channel_id', '')
             is_rayen_channel = channel_id == 'UChhMeymAOC5PNbbnqxD_w4g'
             video_title = video.get('title', 'Unknown')
-            return self._get_fallback_response(video_title, is_rayen_channel)
+            video_author = video.get('author', 'Unknown')
+            return self._get_fallback_response(video_title, is_rayen_channel, video_author)
     
-    def _get_fallback_response(self, video_title: str, is_rayen_channel: bool) -> str:
-        """Get appropriate fallback response based on channel type"""
-        if 'cover' in video_title.lower():
+    def _get_fallback_response(self, video_title: str, is_rayen_channel: bool, video_author: str = "Unknown") -> str:
+        """Get appropriate fallback response based on channel type and content"""
+        # Check if it's a guest/collaboration based on author name
+        is_guest_content = video_author and video_author.lower() not in ['riko', 'rayen', 'just rayen', 'unknown']
+        
+        if is_guest_content:
+            # Guest/collaboration content
+            if 'cover' in video_title.lower():
+                return f"Well, well... a cover by {video_author}: \"{video_title}\". The shrine approves of this offering. <@&1375737416325009552>"
+            else:
+                return f"Oh my, {video_author} graced the channel with \"{video_title}\". How... refreshing. <@&1375737416325009552>"
+        elif 'cover' in video_title.lower():
             if is_rayen_channel:
                 return f"Well, well... Rayen's covering something new: \"{video_title}\". His voice work shows promise. <@&1375737416325009552>"
             else:
@@ -624,13 +643,13 @@ Please create a short video announcement (10-20 words) for this video. Use the v
             else:
                 # This shouldn't happen now since we have fallbacks, but just in case
                 video_title = video.get('title', 'Unknown')
+                video_author = video.get('author', 'Unknown')
                 channel_id = video.get('config', {}).get('channel_id', '')
                 is_rayen_channel = channel_id == 'UChhMeymAOC5PNbbnqxD_w4g'
                 
-                if is_rayen_channel:
-                    fallback_msg = f"Of course Rayen would upload something new: \"{video_title}\". Riko simps, brace yourselves for his chaos. <@&1375737416325009552>\\n{video.get('link', '')}"
-                else:
-                    fallback_msg = f"Of course our digital fox would upload something new: \"{video_title}\". Riko simps, brace yourselves for the chaos. <@&1375737416325009552>\\n{video.get('link', '')}"
+                # Use the context-aware fallback
+                fallback_response = self._get_fallback_response(video_title, is_rayen_channel, video_author)
+                fallback_msg = f"{fallback_response}\n{video.get('link', '')}"
                 
                 await channel.send(fallback_msg)
                 logger.warning(f"⚠️ Used emergency fallback for: {video.get('title', 'Unknown')}")
