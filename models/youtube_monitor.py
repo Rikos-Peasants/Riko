@@ -242,7 +242,7 @@ class YouTubeMonitor:
                     else:
                         logger.info(f"Video {video_id} ({video_data['title']}) not processed yet, adding to queue")
                     
-                    # Filter out YouTube Shorts - multiple checks
+                    # Filter out YouTube Shorts - URL and keyword detection only
                     video_link = video_data.get('link', '')
                     
                     # Check 1: URL contains /shorts/
@@ -250,12 +250,7 @@ class YouTubeMonitor:
                         logger.info(f"Skipping YouTube Short (URL): {video_data['title']} - {video_link}")
                         continue
                     
-                    # Check 2: Duration under 60 seconds
-                    if video_data.get('duration_seconds', 0) < 60:
-                        logger.info(f"Skipping YouTube Short (duration): {video_data['title']} (duration: {video_data.get('duration_seconds', 0)}s)")
-                        continue
-                    
-                    # Check 3: Title/description suggests it's a short
+                    # Check 2: Title/description suggests it's a short
                     title_lower = video_data['title'].lower()
                     description_lower = video_data.get('description', '').lower()
                     short_indicators = ['#shorts', '#short', 'short video', 'youtube short', 'yt short']
