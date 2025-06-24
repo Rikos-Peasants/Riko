@@ -259,10 +259,18 @@ class CommandsController:
                 if hasattr(ctx, 'defer'):
                     await ctx.defer()  # This might take a while
                 
-                # Get the date range for the past week
+                # Get the date range for the PREVIOUS complete week (Monday to Sunday)
                 now = datetime.now()
-                end_date = now
-                start_date = now - timedelta(days=7)
+                # If it's Sunday, show last week. Otherwise show the current week so far.
+                if now.weekday() == 6:  # Sunday
+                    end_date = now.replace(hour=0, minute=0, second=0, microsecond=0)  # Start of today (Sunday)
+                    start_date = end_date - timedelta(days=6)  # Monday of last week
+                else:
+                    # For other days, show current week from Monday to now
+                    days_since_monday = now.weekday()  # Monday is 0
+                    start_date = now - timedelta(days=days_since_monday)
+                    start_date = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
+                    end_date = now
                 
                 # Use the scheduler controller to post the best image
                 await self.bot.scheduler_controller._post_best_image("week", start_date, end_date)
@@ -289,10 +297,20 @@ class CommandsController:
                 if hasattr(ctx, 'defer'):
                     await ctx.defer()  # This might take a while
                 
-                # Get the date range for the past month
+                # Get the date range for the PREVIOUS complete month
                 now = datetime.now()
-                end_date = now
-                start_date = now.replace(day=1)  # First day of current month
+                # If it's the 1st of the month, show last month. Otherwise show current month so far.
+                if now.day == 1:
+                    end_date = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)  # Start of current month
+                    # Go back to the first day of last month
+                    if now.month == 1:
+                        start_date = now.replace(year=now.year-1, month=12, day=1, hour=0, minute=0, second=0, microsecond=0)
+                    else:
+                        start_date = now.replace(month=now.month-1, day=1, hour=0, minute=0, second=0, microsecond=0)
+                else:
+                    # For other days, show current month from 1st to now
+                    start_date = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+                    end_date = now
                 
                 # Use the scheduler controller to post the best image
                 await self.bot.scheduler_controller._post_best_image("month", start_date, end_date)
@@ -1330,6 +1348,618 @@ class CommandsController:
                 else:
                     await ctx.send(embed=error_embed)
 
+        @self.bot.hybrid_command(name="testbest", description="Test best image functionality with custom date range (Bot owners only)")
+        @commands.is_owner()
+        async def test_best_command(ctx, days_back: int = 7, channel_id: int = None):
+            """Test best image functionality with custom parameters"""
+            try:
+                if hasattr(ctx, 'defer'):
+                    await ctx.defer()
+                
+                guild = ctx.guild
+                if not guild or guild.id != Config.GUILD_ID:
+                    error_msg = "This command can only be used in the configured guild."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Calculate date range
+                now = datetime.now()
+                end_date = now
+                start_date = now - timedelta(days=days_back)
+                
+                # Use provided channel or current channel
+                test_channel_id = channel_id if channel_id else ctx.channel.id
+                
+                # Check if it's an image channel
+                if test_channel_id not in Config.IMAGE_REACTION_CHANNELS:
+                    error_msg = f"Channel {test_channel_id} is not configured as an image reaction channel."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Get the best image
+                best_image = await self.bot.leaderboard_manager.get_best_image(
+                    channel_id=str(test_channel_id),
+                    start_date=start_date,
+                    end_date=end_date
+                )
+                
+                if not best_image:
+                    response = f"❌ No images found in the last {days_back} days in channel {test_channel_id}"
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(response)
+                    else:
+                        await ctx.send(response)
+                    return
+                
+                # Create response embed
+                embed = discord.Embed(
+                    title="🔍 Debug: Best Image Found",
+                    color=discord.Color.blue(),
+                    timestamp=datetime.utcnow()
+                )
+                
+                embed.add_field(name="📅 Date Range", value=f"{start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}", inline=False)
+                embed.add_field(name="📺 Channel ID", value=str(test_channel_id), inline=True)
+                embed.add_field(name="💬 Message ID", value=best_image['message_id'], inline=True)
+                embed.add_field(name="👤 Author", value=best_image['author_name'], inline=True)
+                embed.add_field(name="🏆 Score", value=str(best_image['score']), inline=True)
+                embed.add_field(name="👍 Thumbs Up", value=str(best_image['thumbs_up']), inline=True)
+                embed.add_field(name="👎 Thumbs Down", value=str(best_image['thumbs_down']), inline=True)
+                embed.add_field(name="📅 Posted", value=best_image['created_at'].strftime('%Y-%m-%d %H:%M:%S'), inline=False)
+                embed.add_field(name="🔗 Jump URL", value=f"[Original Message]({best_image['jump_url']})", inline=False)
+                
+                if best_image.get('image_url'):
+                    embed.set_image(url=best_image['image_url'])
+                
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(embed=embed)
+                else:
+                    await ctx.send(embed=embed)
+                    
+            except Exception as e:
+                error_embed = EmbedViews.error_embed(f"Failed to test best image: {str(e)}")
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(embed=error_embed, ephemeral=True)
+                else:
+                    await ctx.send(embed=error_embed)
+
+        @self.bot.hybrid_command(name="updatescore", description="Update scores for recent images by re-scanning reactions (Bot owners only)")
+        @commands.is_owner()
+        async def update_score_command(ctx, days_back: int = 7, channel_id: int = None):
+            """Update scores for recent images by re-scanning their reactions"""
+            try:
+                if hasattr(ctx, 'defer'):
+                    await ctx.defer()
+                
+                guild = ctx.guild
+                if not guild or guild.id != Config.GUILD_ID:
+                    error_msg = "This command can only be used in the configured guild."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Calculate date range
+                now = datetime.now()
+                start_date = now - timedelta(days=days_back)
+                
+                # Use provided channel or current channel
+                test_channel_id = channel_id if channel_id else ctx.channel.id
+                
+                # Check if it's an image channel
+                if test_channel_id not in Config.IMAGE_REACTION_CHANNELS:
+                    error_msg = f"Channel {test_channel_id} is not configured as an image reaction channel."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                channel = guild.get_channel(test_channel_id)
+                if not channel:
+                    error_msg = f"Could not find channel {test_channel_id}"
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Get all images from the database in this time period
+                images_in_db = list(self.bot.leaderboard_manager.images_collection.find({
+                    "channel_id": str(test_channel_id),
+                    "created_at": {"$gte": start_date}
+                }))
+                
+                updated_count = 0
+                errors = 0
+                
+                for image_data in images_in_db:
+                    try:
+                        # Get the actual Discord message
+                        message = await channel.fetch_message(int(image_data['message_id']))
+                        
+                        # Count reactions, excluding bot reactions
+                        thumbs_up = 0
+                        thumbs_down = 0
+                        
+                        for reaction in message.reactions:
+                            if str(reaction.emoji) == '👍':
+                                thumbs_up = reaction.count
+                                # Check if bot reacted and subtract 1
+                                async for user in reaction.users():
+                                    if user.bot:
+                                        thumbs_up = max(0, thumbs_up - 1)
+                                        break
+                            elif str(reaction.emoji) == '👎':
+                                thumbs_down = reaction.count
+                                # Check if bot reacted and subtract 1
+                                async for user in reaction.users():
+                                    if user.bot:
+                                        thumbs_down = max(0, thumbs_down - 1)
+                                        break
+                        
+                        # Update the database
+                        await self.bot.leaderboard_manager.update_image_message_score(
+                            message_id=str(message.id),
+                            thumbs_up=thumbs_up,
+                            thumbs_down=thumbs_down
+                        )
+                        
+                        updated_count += 1
+                        
+                        if updated_count % 10 == 0:
+                            status = f"Updated {updated_count}/{len(images_in_db)} images..."
+                            logger.info(status)
+                    
+                    except discord.NotFound:
+                        # Message was deleted
+                        logger.info(f"Message {image_data['message_id']} was deleted, removing from database")
+                        await self.bot.leaderboard_manager.delete_image_message(image_data['message_id'])
+                        errors += 1
+                    except Exception as e:
+                        logger.error(f"Error updating message {image_data['message_id']}: {e}")
+                        errors += 1
+                
+                # Create response embed
+                embed = discord.Embed(
+                    title="✅ Score Update Complete",
+                    color=discord.Color.green(),
+                    timestamp=datetime.utcnow()
+                )
+                
+                embed.add_field(name="📊 Updated Images", value=str(updated_count), inline=True)
+                embed.add_field(name="❌ Errors", value=str(errors), inline=True)
+                embed.add_field(name="📅 Days Back", value=str(days_back), inline=True)
+                embed.add_field(name="📺 Channel", value=f"<#{test_channel_id}>", inline=False)
+                
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(embed=embed)
+                else:
+                    await ctx.send(embed=embed)
+                    
+            except Exception as e:
+                error_embed = EmbedViews.error_embed(f"Failed to update scores: {str(e)}")
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(embed=error_embed, ephemeral=True)
+                else:
+                    await ctx.send(embed=error_embed)
+
+        @self.bot.hybrid_command(name="debugreactions", description="Debug reaction tracking setup (Bot owners only)")
+        @commands.is_owner()
+        async def debug_reactions_command(ctx):
+            """Debug reaction tracking configuration and test setup"""
+            try:
+                embed = discord.Embed(
+                    title="🔍 Reaction Tracking Debug",
+                    color=discord.Color.blue(),
+                    timestamp=datetime.utcnow()
+                )
+                
+                # Show current channel info
+                current_channel = ctx.channel.id
+                embed.add_field(
+                    name="📍 Current Channel",
+                    value=f"<#{current_channel}> (ID: {current_channel})",
+                    inline=False
+                )
+                
+                # Show configured channels
+                channel_list = []
+                for channel_id in Config.IMAGE_REACTION_CHANNELS:
+                    channel = ctx.guild.get_channel(channel_id)
+                    if channel:
+                        status = "✅ Found" if current_channel == channel_id else "📍 Other"
+                        channel_list.append(f"{status} <#{channel_id}> (#{channel.name})")
+                    else:
+                        channel_list.append(f"❌ Missing Channel ID: {channel_id}")
+                
+                embed.add_field(
+                    name="⚙️ Configured Image Channels",
+                    value="\n".join(channel_list) if channel_list else "None configured",
+                    inline=False
+                )
+                
+                # Check if current channel is valid for reactions
+                is_valid_channel = current_channel in Config.IMAGE_REACTION_CHANNELS
+                embed.add_field(
+                    name="🎯 Reaction Tracking Status",
+                    value="✅ ENABLED in this channel" if is_valid_channel else "❌ DISABLED in this channel",
+                    inline=False
+                )
+                
+                # Add testing instructions
+                if is_valid_channel:
+                    embed.add_field(
+                        name="🧪 To Test",
+                        value="1. Post an image in this channel\n2. React with 👍 or 👎\n3. Check bot logs for reaction messages",
+                        inline=False
+                    )
+                else:
+                    embed.add_field(
+                        name="🧪 To Test",
+                        value="Switch to one of the configured image channels above, then:\n1. Post an image\n2. React with 👍 or 👎\n3. Check bot logs",
+                        inline=False
+                    )
+                
+                # Add guild info
+                embed.add_field(
+                    name="🏠 Guild Info",
+                    value=f"Current: {ctx.guild.id}\nConfigured: {Config.GUILD_ID}\nMatch: {'✅ Yes' if ctx.guild.id == Config.GUILD_ID else '❌ No'}",
+                    inline=False
+                )
+                
+                await ctx.send(embed=embed)
+                
+            except Exception as e:
+                error_embed = EmbedViews.error_embed(f"Failed to debug reactions: {str(e)}")
+                await ctx.send(embed=error_embed)
+
+        # YouTube monitoring command group
+        @self.bot.hybrid_group(name="youtube", description="Manage YouTube video monitoring")
+        @commands.is_owner()
+        async def youtube_group(ctx):
+            """Base group for YouTube monitoring commands"""
+            if ctx.invoked_subcommand is None:
+                await ctx.send_help(youtube_group)
+
+        @youtube_group.command(name="list", description="Show all monitored YouTube channels")
+        async def youtube_list(ctx):
+            """List all monitored YouTube channels"""
+            try:
+                if hasattr(ctx, 'defer'):
+                    await ctx.defer()
+                
+                guild = ctx.guild
+                if not guild or guild.id != Config.GUILD_ID:
+                    error_msg = "This command can only be used in the configured guild."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                youtube_monitor = getattr(self.bot, 'youtube_monitor', None)
+                if not youtube_monitor:
+                    error_msg = "YouTube monitoring is not initialized."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                channels = await youtube_monitor.get_monitored_channels_list()
+                
+                embed = discord.Embed(
+                    title="📺 YouTube Monitoring Status",
+                    color=discord.Color.blue(),
+                    timestamp=datetime.utcnow()
+                )
+                
+                if channels:
+                    for i, channel in enumerate(channels[:10], 1):  # Limit to 10
+                        discord_channel = guild.get_channel(channel.get('discord_channel_id'))
+                        channel_name = discord_channel.name if discord_channel else "Unknown"
+                        
+                        embed.add_field(
+                            name=f"{i}. {channel.get('channel_name', 'Unknown')}",
+                            value=f"**ID:** `{channel.get('youtube_channel_id')}`\n"
+                                  f"**Posts to:** #{channel_name}\n"
+                                  f"**Status:** {'🟢 Active' if channel.get('enabled') else '🔴 Disabled'}",
+                            inline=False
+                        )
+                else:
+                    embed.add_field(
+                        name="No Channels Monitored",
+                        value="Use `/youtube add` to start monitoring channels",
+                        inline=False
+                    )
+                
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(embed=embed)
+                else:
+                    await ctx.send(embed=embed)
+                    
+            except Exception as e:
+                error_embed = EmbedViews.error_embed(f"Failed to list YouTube channels: {str(e)}")
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(embed=error_embed, ephemeral=True)
+                else:
+                    await ctx.send(embed=error_embed)
+
+        @youtube_group.command(name="add", description="Add a YouTube channel to monitor")
+        async def youtube_add(ctx, youtube_channel_id: str, discord_channel: discord.TextChannel):
+            """Add a YouTube channel to monitor"""
+            try:
+                if hasattr(ctx, 'defer'):
+                    await ctx.defer()
+                
+                guild = ctx.guild
+                if not guild or guild.id != Config.GUILD_ID:
+                    error_msg = "This command can only be used in the configured guild."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                youtube_monitor = getattr(self.bot, 'youtube_monitor', None)
+                if not youtube_monitor:
+                    error_msg = "YouTube monitoring is not initialized."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                success = await youtube_monitor.add_monitored_channel(
+                    youtube_channel_id=youtube_channel_id,
+                    discord_channel_id=discord_channel.id,
+                    guild_id=guild.id
+                )
+                
+                if success:
+                    channel_info = await youtube_monitor.get_channel_info(youtube_channel_id)
+                    embed = discord.Embed(
+                        title="✅ YouTube Monitor Added",
+                        description=f"Now monitoring **{channel_info.get('title', 'Unknown')}** for new videos",
+                        color=discord.Color.green(),
+                        timestamp=datetime.utcnow()
+                    )
+                    embed.add_field(name="YouTube Channel", value=youtube_channel_id, inline=True)
+                    embed.add_field(name="Discord Channel", value=discord_channel.mention, inline=True)
+                    embed.add_field(name="Character", value="Ino will announce new videos", inline=False)
+                else:
+                    embed = EmbedViews.error_embed("Failed to add YouTube monitor. Check if the channel ID is valid.")
+                
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(embed=embed)
+                else:
+                    await ctx.send(embed=embed)
+                    
+            except Exception as e:
+                error_embed = EmbedViews.error_embed(f"Failed to add YouTube monitor: {str(e)}")
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(embed=error_embed, ephemeral=True)
+                else:
+                    await ctx.send(embed=error_embed)
+
+        @youtube_group.command(name="remove", description="Remove a YouTube channel from monitoring")
+        async def youtube_remove(ctx, youtube_channel_id: str):
+            """Remove a YouTube channel from monitoring"""
+            try:
+                if hasattr(ctx, 'defer'):
+                    await ctx.defer()
+                
+                guild = ctx.guild
+                if not guild or guild.id != Config.GUILD_ID:
+                    error_msg = "This command can only be used in the configured guild."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                youtube_monitor = getattr(self.bot, 'youtube_monitor', None)
+                if not youtube_monitor:
+                    error_msg = "YouTube monitoring is not initialized."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                success = await youtube_monitor.remove_monitored_channel(youtube_channel_id)
+                
+                if success:
+                    embed = discord.Embed(
+                        title="✅ YouTube Monitor Removed",
+                        description=f"No longer monitoring channel `{youtube_channel_id}`",
+                        color=discord.Color.orange(),
+                        timestamp=datetime.utcnow()
+                    )
+                else:
+                    embed = EmbedViews.error_embed("Channel not found in monitoring list.")
+                
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(embed=embed)
+                else:
+                    await ctx.send(embed=embed)
+                    
+            except Exception as e:
+                error_embed = EmbedViews.error_embed(f"Failed to remove YouTube monitor: {str(e)}")
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(embed=error_embed, ephemeral=True)
+                else:
+                    await ctx.send(embed=error_embed)
+
+        @youtube_group.command(name="test", description="Test Ino's response to a YouTube channel's latest video")
+        async def youtube_test(ctx, youtube_channel_id: str):
+            """Test Ino's response generation for a YouTube channel"""
+            try:
+                if hasattr(ctx, 'defer'):
+                    await ctx.defer()
+                
+                guild = ctx.guild
+                if not guild or guild.id != Config.GUILD_ID:
+                    error_msg = "This command can only be used in the configured guild."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                youtube_monitor = getattr(self.bot, 'youtube_monitor', None)
+                if not youtube_monitor:
+                    error_msg = "YouTube monitoring is not initialized."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Get latest video and generate response
+                videos = await youtube_monitor.get_recent_videos(youtube_channel_id)
+                if videos:
+                    latest_video = videos[0]
+                    ino_response = await youtube_monitor.generate_ino_response(latest_video)
+                    
+                    embed = discord.Embed(
+                        title="🧪 Test Ino Response",
+                        color=discord.Color.purple(),
+                        timestamp=datetime.utcnow()
+                    )
+                    embed.add_field(name="Latest Video", value=latest_video.get('title', 'Unknown'), inline=False)
+                    embed.add_field(name="Video Link", value=latest_video.get('link', 'N/A'), inline=False)
+                    embed.add_field(name="Ino's Response", value=ino_response or "Failed to generate response", inline=False)
+                else:
+                    embed = EmbedViews.error_embed("No videos found for this channel.")
+                
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(embed=embed)
+                else:
+                    await ctx.send(embed=embed)
+                    
+            except Exception as e:
+                error_embed = EmbedViews.error_embed(f"Failed to test YouTube response: {str(e)}")
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(embed=error_embed, ephemeral=True)
+                else:
+                    await ctx.send(embed=error_embed)
+
+        @youtube_group.command(name="help", description="Show YouTube monitoring help and setup guide")
+        async def youtube_help(ctx):
+            """Show help for YouTube monitoring commands"""
+            try:
+                embed = discord.Embed(
+                    title="📺 YouTube Monitor Help",
+                    color=discord.Color.blue(),
+                    timestamp=datetime.utcnow()
+                )
+                embed.add_field(
+                    name="Available Commands",
+                    value="• `/youtube list` - Show monitored channels\n"
+                          "• `/youtube add <channel_id> <discord_channel>` - Add monitoring\n"
+                          "• `/youtube remove <channel_id>` - Remove monitoring\n"
+                          "• `/youtube test <channel_id>` - Test Ino response",
+                    inline=False
+                )
+                embed.add_field(
+                    name="How to find YouTube Channel ID",
+                    value="**Method 1:** Go to the channel → View page source (Ctrl+U) → Search for `channelId`\n"
+                          "**Method 2:** Use a browser extension like 'YouTube Channel ID'\n"
+                          "**Method 3:** Go to channel → About tab → Copy channel ID (if available)",
+                    inline=False
+                )
+                embed.add_field(
+                    name="Setup Requirements",
+                    value="• `GEMINI_API_KEY` must be set in `.env` file\n"
+                          "• Bot needs access to the Discord channel\n"
+                          "• YouTube channel must be public",
+                    inline=False
+                )
+                embed.add_field(
+                    name="How It Works",
+                    value="Ino checks for new videos every 10 minutes and posts character-appropriate announcements using AI",
+                    inline=False
+                )
+                
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(embed=embed)
+                else:
+                    await ctx.send(embed=embed)
+                    
+            except Exception as e:
+                error_embed = EmbedViews.error_embed(f"Failed to show help: {str(e)}")
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(embed=error_embed, ephemeral=True)
+                else:
+                    await ctx.send(embed=error_embed)
+
+        @youtube_group.command(name="validate", description="Validate a YouTube channel ID without adding it")
+        async def youtube_validate(ctx, youtube_channel_id: str):
+            """Validate a YouTube channel ID without adding it to monitoring"""
+            try:
+                if hasattr(ctx, 'defer'):
+                    await ctx.defer()
+                
+                youtube_monitor = getattr(self.bot, 'youtube_monitor', None)
+                if not youtube_monitor:
+                    error_msg = "YouTube monitoring is not initialized."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Test the channel validation
+                channel_info = await youtube_monitor.get_channel_info(youtube_channel_id)
+                
+                if channel_info:
+                    embed = discord.Embed(
+                        title="✅ YouTube Channel Valid",
+                        color=discord.Color.green(),
+                        timestamp=datetime.utcnow()
+                    )
+                    embed.add_field(name="Channel ID", value=youtube_channel_id, inline=True)
+                    embed.add_field(name="Channel Name", value=channel_info.get('title', 'Unknown'), inline=True)
+                    embed.add_field(name="Description", value=channel_info.get('description', 'No description')[:100] + '...', inline=False)
+                    embed.add_field(name="Channel Link", value=channel_info.get('link', 'N/A'), inline=False)
+                    
+                    if channel_info.get('latest_video'):
+                        latest = channel_info['latest_video']
+                        embed.add_field(name="Latest Video", value=f"[{latest.get('title', 'Unknown')}]({latest.get('link', '')})", inline=False)
+                else:
+                    embed = discord.Embed(
+                        title="❌ YouTube Channel Invalid",
+                        description=f"Could not validate channel ID: `{youtube_channel_id}`\n\n**Possible issues:**\n• Channel doesn't exist\n• Channel is private\n• Invalid channel ID format\n• Network/API issues",
+                        color=discord.Color.red(),
+                        timestamp=datetime.utcnow()
+                    )
+                    embed.add_field(
+                        name="How to find correct Channel ID",
+                        value="1. Go to the YouTube channel\n2. Click 'About' tab\n3. Look for 'Channel ID' or use browser extension\n4. Should start with 'UC' and be 24 characters long",
+                        inline=False
+                    )
+                
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(embed=embed)
+                else:
+                    await ctx.send(embed=embed)
+                    
+            except Exception as e:
+                error_embed = EmbedViews.error_embed(f"Failed to validate YouTube channel: {str(e)}")
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(embed=error_embed, ephemeral=True)
+                else:
+                    await ctx.send(embed=error_embed)
+
         # Store references to prevent garbage collection
         self.debug_command = debug_command
         self.test_owner_command = test_owner_command
@@ -1346,4 +1976,12 @@ class CommandsController:
         self.warn_command = warn_command
         self.warnings_command = warnings_command
         self.clearwarnings_command = clearwarnings_command
-        self.setlogchannel_command = setlogchannel_command 
+        self.setlogchannel_command = setlogchannel_command
+        self.youtube_group = youtube_group
+        self.youtube_list = youtube_list
+        self.youtube_add = youtube_add
+        self.youtube_remove = youtube_remove
+        self.youtube_test = youtube_test
+        self.youtube_help = youtube_help
+        self.youtube_validate = youtube_validate
+        self.debug_reactions_command = debug_reactions_command

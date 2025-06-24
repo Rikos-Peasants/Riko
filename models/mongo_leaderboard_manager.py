@@ -204,7 +204,7 @@ class MongoLeaderboardManager:
             )
             
             if result.modified_count > 0:
-                logger.debug(f"Updated score for message {message_id}: {net_score} (👍{thumbs_up} - 👎{thumbs_down})")
+                logger.info(f"Updated score for message {message_id}: {net_score} (👍{thumbs_up} - 👎{thumbs_down})")
                 return True
             return False
             
@@ -215,6 +215,24 @@ class MongoLeaderboardManager:
     async def get_best_image(self, channel_id: str, start_date: datetime, end_date: datetime) -> Optional[Dict]:
         """Get the best image in a channel for a given time period"""
         try:
+            # Log the query parameters for debugging
+            logger.info(f"Searching for best image in channel {channel_id} from {start_date} to {end_date}")
+            
+            # First, let's see how many images we have in this time period
+            count = self.images_collection.count_documents({
+                "channel_id": str(channel_id),
+                "created_at": {
+                    "$gte": start_date,
+                    "$lt": end_date
+                }
+            })
+            
+            logger.info(f"Found {count} images in the specified time period")
+            
+            if count == 0:
+                logger.info("No images found in the time period")
+                return None
+            
             # Query for the highest scored image in the time period
             result = self.images_collection.find_one(
                 {
@@ -226,6 +244,27 @@ class MongoLeaderboardManager:
                 },
                 sort=[("score", DESCENDING)]
             )
+            
+            if result:
+                logger.info(f"Best image found: Message ID {result['message_id']}, Score: {result['score']}, Author: {result['author_name']}")
+                
+                # Also log the top 3 images for comparison
+                top_images = list(self.images_collection.find(
+                    {
+                        "channel_id": str(channel_id),
+                        "created_at": {
+                            "$gte": start_date,
+                            "$lt": end_date
+                        }
+                    },
+                    sort=[("score", DESCENDING)]
+                ).limit(3))
+                
+                logger.info("Top 3 images in period:")
+                for i, img in enumerate(top_images, 1):
+                    logger.info(f"  {i}. Score: {img['score']}, Author: {img['author_name']}, ID: {img['message_id']}")
+            else:
+                logger.warning("Query returned no results despite having images in the collection")
             
             return result
             
@@ -565,39 +604,59 @@ class MongoLeaderboardManager:
             return "none"
 
     # Settings Management Methods
-    async def set_guild_setting(self, guild_id: int, setting_name: str, setting_value) -> bool:
-        """Set a guild-specific setting"""
-        try:
-            result = self.settings_collection.update_one(
-                {"guild_id": str(guild_id), "setting_name": setting_name},
-                {
-                    "$set": {
-                        "guild_id": str(guild_id),
-                        "setting_name": setting_name,
-                        "setting_value": setting_value,
-                        "updated_at": datetime.now()
-                    }
-                },
-                upsert=True
-            )
-            return True
-        except Exception as e:
-            logger.error(f"Error setting guild setting: {e}")
-            return False
-
     async def get_guild_setting(self, guild_id: int, setting_name: str, default_value=None):
-        """Get a guild-specific setting"""
+        """Get a guild-specific setting from the database"""
         try:
-            result = self.settings_collection.find_one({
-                "guild_id": str(guild_id),
-                "setting_name": setting_name
-            })
+            query = {"setting_name": setting_name}
+            if guild_id:
+                query["guild_id"] = guild_id
+            
+            result = self.settings_collection.find_one(query)
+            
             if result:
                 return result.get("setting_value", default_value)
+            
             return default_value
+            
         except Exception as e:
-            logger.error(f"Error getting guild setting: {e}")
+            logger.error(f"Error getting guild setting {setting_name}: {e}")
             return default_value
+
+    async def set_guild_setting(self, guild_id: int, setting_name: str, setting_value):
+        """Set a guild-specific setting in the database"""
+        try:
+            query = {"setting_name": setting_name}
+            if guild_id:
+                query["guild_id"] = guild_id
+                
+            if setting_value is None:
+                # Remove the setting if value is None
+                result = self.settings_collection.delete_one(query)
+                logger.info(f"Removed guild setting {setting_name}")
+                return True
+            else:
+                # Update or insert the setting
+                update_doc = {
+                    "$set": {
+                        "guild_id": guild_id,
+                        "setting_name": setting_name,
+                        "setting_value": setting_value,
+                        "updated_at": datetime.utcnow()
+                    }
+                }
+                
+                result = self.settings_collection.update_one(
+                    query,
+                    update_doc,
+                    upsert=True
+                )
+                
+                logger.info(f"Updated guild setting {setting_name}")
+                return True
+            
+        except Exception as e:
+            logger.error(f"Error setting guild setting {setting_name}: {e}")
+            return False
 
     async def get_warning_log_channel(self, guild_id: int) -> Optional[int]:
         """Get the warning log channel for a guild"""

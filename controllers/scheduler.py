@@ -19,26 +19,19 @@ class SchedulerController:
         """Start all scheduled tasks"""
         logger.info("Starting scheduled tasks...")
         
-        # Start weekly, monthly, and yearly tasks
-        if not self.weekly_best_image.is_running():
-            self.weekly_best_image.start()
-        
-        if not self.monthly_best_image.is_running():
-            self.monthly_best_image.start()
-        
-        if not self.yearly_best_image.is_running():
-            self.yearly_best_image.start()
-        
-        if not self.check_expired_events.is_running():
-            self.check_expired_events.start()
-        
-        if not self.check_streaks.is_running():
-            self.check_streaks.start()
+        # Start all tasks
+        self.weekly_best_image.start()
+        self.monthly_best_image.start() 
+        self.yearly_best_image.start()
+        self.check_expired_events.start()
+        self.check_streaks.start()
+        self.check_youtube_videos.start()  # Use self.check_youtube_videos
     
     def stop_tasks(self):
         """Stop all scheduled tasks"""
         logger.info("Stopping scheduled tasks...")
         
+        # Stop all tasks
         if self.weekly_best_image.is_running():
             self.weekly_best_image.cancel()
         
@@ -53,6 +46,9 @@ class SchedulerController:
         
         if self.check_streaks.is_running():
             self.check_streaks.cancel()
+        
+        if self.check_youtube_videos.is_running():
+            self.check_youtube_videos.cancel()
     
     @tasks.loop(hours=24)  # Check daily
     async def weekly_best_image(self):
@@ -63,9 +59,12 @@ class SchedulerController:
             if now.weekday() == 6:  # Sunday
                 logger.info("Starting weekly best image selection...")
                 
-                # Get the date range for the past week
-                end_date = now
-                start_date = now - timedelta(days=7)
+                # Get the date range for the PREVIOUS complete week (Monday to Sunday)
+                # Sunday is the end of the week, so we want last Monday to last Sunday
+                end_date = now.replace(hour=0, minute=0, second=0, microsecond=0)  # Start of today (Sunday)
+                start_date = end_date - timedelta(days=6)  # Monday of last week
+                
+                logger.info(f"Looking for best images from {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
                 
                 await self._post_best_image("week", start_date, end_date)
                 
@@ -81,13 +80,16 @@ class SchedulerController:
             if now.day == 1:
                 logger.info("Starting monthly best image selection...")
                 
-                # Get the date range for the past month
-                end_date = now
+                # Get the date range for the PREVIOUS complete month
+                end_date = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)  # Start of current month
+                
                 # Go back to the first day of last month
                 if now.month == 1:
-                    start_date = now.replace(year=now.year-1, month=12, day=1)
+                    start_date = now.replace(year=now.year-1, month=12, day=1, hour=0, minute=0, second=0, microsecond=0)
                 else:
-                    start_date = now.replace(month=now.month-1, day=1)
+                    start_date = now.replace(month=now.month-1, day=1, hour=0, minute=0, second=0, microsecond=0)
+                
+                logger.info(f"Looking for best images from {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
                 
                 await self._post_best_image("month", start_date, end_date)
                 
@@ -103,9 +105,11 @@ class SchedulerController:
             if now.month == 1 and now.day == 1:
                 logger.info("Starting yearly best image selection...")
                 
-                # Get the date range for the past year
-                end_date = now
-                start_date = now.replace(year=now.year-1, month=1, day=1)
+                # Get the date range for the PREVIOUS complete year
+                end_date = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)  # Start of current year
+                start_date = now.replace(year=now.year-1, month=1, day=1, hour=0, minute=0, second=0, microsecond=0)  # Start of previous year
+                
+                logger.info(f"Looking for best images from {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
                 
                 await self._post_best_image("year", start_date, end_date)
                 
@@ -120,6 +124,8 @@ class SchedulerController:
                 logger.error(f"Could not find guild {Config.GUILD_ID}")
                 return
             
+            logger.info(f"Finding best {period} image from {start_date.strftime('%Y-%m-%d %H:%M')} to {end_date.strftime('%Y-%m-%d %H:%M')}")
+            
             # Find the best image from each channel separately
             for channel_id in Config.IMAGE_REACTION_CHANNELS:
                 channel = guild.get_channel(channel_id)
@@ -127,7 +133,7 @@ class SchedulerController:
                     logger.warning(f"Could not find channel {channel_id}")
                     continue
                 
-                logger.info(f"Finding best image in #{channel.name} for {period}")
+                logger.info(f"Finding best image in #{channel.name} (ID: {channel_id}) for {period}")
                 
                 # Get the best image from MongoDB
                 best_image = await self.bot.leaderboard_manager.get_best_image(
@@ -145,8 +151,15 @@ class SchedulerController:
                         value=f"#{channel.name}",
                         inline=False
                     )
+                    embed.add_field(
+                        name="🔍 Search Period",
+                        value=f"From {start_date.strftime('%B %d, %Y')} to {end_date.strftime('%B %d, %Y')}",
+                        inline=False
+                    )
                     await channel.send(embed=embed)
                     continue
+                
+                logger.info(f"Found winning image in #{channel.name}: {best_image['author_name']} with score {best_image['score']}")
                 
                 # Create custom message object for the embed
                 class ImageMessage:
@@ -165,7 +178,9 @@ class SchedulerController:
                 # Get the author
                 try:
                     message.author = await self.bot.fetch_user(int(best_image['author_id']))
-                except:
+                    logger.info(f"Found author: {message.author.display_name}")
+                except Exception as e:
+                    logger.warning(f"Could not fetch user {best_image['author_id']}: {e}")
                     # If user not found, create a dummy user
                     class DummyUser:
                         def __init__(self, name):
@@ -197,6 +212,14 @@ class SchedulerController:
                     inline=True
                 )
                 
+                # Add search period info
+                embed.add_field(
+                    name="🔍 Search Period",
+                    value=f"From {start_date.strftime('%B %d, %Y')} to {end_date.strftime('%B %d, %Y')}",
+                    inline=False
+                )
+                
+                logger.info(f"Posting winning image embed in #{channel.name}")
                 await channel.send(embed=embed)
                 
                 # Award achievement if quest manager is available
@@ -310,4 +333,50 @@ class SchedulerController:
     @check_streaks.before_loop
     async def before_streaks_task(self):
         """Wait until the bot is ready before starting streaks task"""
+        await self.bot.wait_until_ready()
+    
+    @tasks.loop(minutes=1)  # Check every minute for new videos
+    async def check_youtube_videos(self):
+        """Check for new YouTube videos and announce them"""
+        logger.info("Checking for new YouTube videos...")
+        
+        try:
+            # Use the bot's YouTube monitor instance
+            if not hasattr(self.bot, 'youtube_monitor') or not self.bot.youtube_monitor:
+                logger.warning("YouTube monitor not available on bot instance")
+                return
+            
+            youtube_monitor = self.bot.youtube_monitor
+            await youtube_monitor.load_monitored_channels()
+            
+            # Log how many channels we're monitoring
+            channel_count = len(youtube_monitor.monitored_channels)
+            logger.info(f"Monitoring {channel_count} YouTube channels")
+            
+            if channel_count == 0:
+                logger.debug("No channels to monitor")
+                return
+            
+            new_videos = await youtube_monitor.check_for_new_videos()
+            
+            if new_videos:
+                logger.info(f"🎬 Found {len(new_videos)} new videos to announce")
+                for video in new_videos:
+                    try:
+                        await youtube_monitor.announce_video(video)
+                        # Mark video as processed only after successful announcement
+                        await youtube_monitor.mark_video_processed(video['id'])
+                        logger.info(f"✅ Announced video: {video.get('title', 'Unknown')}")
+                    except Exception as e:
+                        logger.error(f"❌ Failed to announce video {video.get('title', 'Unknown')}: {e}")
+                        # Don't mark as processed if announcement failed, so it will be retried
+            else:
+                logger.debug("No new videos found")
+                
+        except Exception as e:
+            logger.error(f"Error in YouTube video checking task: {e}")
+    
+    @check_youtube_videos.before_loop
+    async def before_youtube_videos_task(self):
+        """Wait for bot to be ready before starting YouTube video checking"""
         await self.bot.wait_until_ready() 

@@ -1,0 +1,686 @@
+import os
+import asyncio
+import feedparser
+import requests
+from datetime import datetime, timedelta
+from typing import Optional, Dict, List
+import logging
+from google import genai
+from google.genai import types
+from googleapiclient.discovery import build
+from config import Config
+
+logger = logging.getLogger(__name__)
+
+class YouTubeMonitor:
+    """Monitors YouTube channels for new videos and generates Ino responses"""
+    
+    def __init__(self, mongodb_manager=None):
+        self.monitored_channels = {}  # Dictionary to store channel configs
+        self.mongodb_manager = mongodb_manager
+        self.gemini_api_key = Config.GEMINI_API_KEY if hasattr(Config, 'GEMINI_API_KEY') and Config.GEMINI_API_KEY else None
+        self.guild_id = Config.GUILD_ID
+        self.bot = None  # Will be set when needed
+        
+        # Initialize YouTube API client
+        self.youtube_api_key = Config.YOUTUBE_API_KEY if hasattr(Config, 'YOUTUBE_API_KEY') and Config.YOUTUBE_API_KEY else None
+        if self.youtube_api_key:
+            try:
+                self.youtube_client = build('youtube', 'v3', developerKey=self.youtube_api_key)
+                logger.info("✅ YouTube API client initialized successfully")
+            except Exception as e:
+                logger.error(f"❌ Failed to initialize YouTube API client: {e}")
+                self.youtube_client = None
+        else:
+            logger.warning("No YouTube API key found - will use RSS fallback")
+            self.youtube_client = None
+        
+        # Configure Gemini AI if API key is available
+        if self.gemini_api_key:
+            try:
+                self.gemini_client = genai.Client(api_key=self.gemini_api_key)
+                logger.info("Gemini AI configured successfully")
+            except Exception as e:
+                logger.error(f"Failed to configure Gemini AI: {e}")
+                self.gemini_api_key = None
+                self.gemini_client = None
+        else:
+            logger.warning("No Gemini API key found - Ino responses will use fallback templates")
+            self.gemini_client = None
+
+    async def load_monitored_channels(self):
+        """Load monitored YouTube channels from database"""
+        try:
+            # Get all YouTube monitoring settings from the database
+            # Look for all settings that start with "youtube_monitor_"
+            if hasattr(self.mongodb_manager, 'settings_collection'):
+                cursor = self.mongodb_manager.settings_collection.find({
+                    "setting_name": {"$regex": "^youtube_monitor_UC"}
+                })
+                
+                self.monitored_channels = {}
+                count = 0
+                
+                for setting_doc in cursor:
+                    setting_value = setting_doc.get('setting_value', {})
+                    if isinstance(setting_value, dict):
+                        youtube_channel_id = setting_value.get('youtube_channel_id')
+                        if youtube_channel_id:
+                            self.monitored_channels[youtube_channel_id] = setting_value
+                            count += 1
+                
+                logger.info(f"Loaded {count} monitored YouTube channels from database")
+            else:
+                logger.error("MongoDB settings collection not available")
+            
+        except Exception as e:
+            logger.error(f"Error loading monitored channels: {e}")
+
+    async def add_monitored_channel(self, youtube_channel_id: str, discord_channel_id: int, guild_id: int) -> bool:
+        """Add a YouTube channel to monitor"""
+        try:
+            # Validate YouTube channel exists
+            channel_info = await self.get_channel_info(youtube_channel_id)
+            if not channel_info:
+                return False
+            
+            # Store in database
+            setting = {
+                'youtube_channel_id': youtube_channel_id,
+                'discord_channel_id': discord_channel_id,
+                'guild_id': guild_id,
+                'channel_name': channel_info.get('title', 'Unknown'),
+                'added_at': datetime.utcnow().isoformat(),
+                'last_video_id': None,
+                'last_check': datetime.utcnow().isoformat(),  # Set current time to prevent old video spam
+                'enabled': True
+            }
+            
+            # Save to database as a setting
+            await self.mongodb_manager.set_guild_setting(
+                guild_id=guild_id,
+                setting_name=f"youtube_monitor_{youtube_channel_id}",
+                setting_value=setting
+            )
+            
+            self.monitored_channels[youtube_channel_id] = setting
+            logger.info(f"Added YouTube channel monitoring: {channel_info.get('title')} -> Discord channel {discord_channel_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error adding monitored channel: {e}")
+            return False
+
+    async def remove_monitored_channel(self, youtube_channel_id: str) -> bool:
+        """Remove a YouTube channel from monitoring"""
+        try:
+            if youtube_channel_id not in self.monitored_channels:
+                return False
+            
+            setting = self.monitored_channels[youtube_channel_id]
+            guild_id = setting.get('guild_id')
+            
+            # Remove from database
+            await self.mongodb_manager.set_guild_setting(
+                guild_id=guild_id,
+                setting_name=f"youtube_monitor_{youtube_channel_id}",
+                setting_value=None  # Setting to None removes it
+            )
+            
+            del self.monitored_channels[youtube_channel_id]
+            logger.info(f"Removed YouTube channel monitoring: {youtube_channel_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error removing monitored channel: {e}")
+            return False
+
+    async def get_channel_info(self, youtube_channel_id: str) -> Optional[Dict]:
+        """Get basic info about a YouTube channel using YouTube API"""
+        try:
+            if not self.youtube_client:
+                logger.warning("YouTube API client not available, falling back to RSS")
+                return await self._get_channel_info_rss(youtube_channel_id)
+            
+            # Use YouTube API to get channel info
+            logger.info(f"Checking YouTube channel: {youtube_channel_id}")
+            
+            request = self.youtube_client.channels().list(
+                part='snippet,statistics',
+                id=youtube_channel_id
+            )
+            response = request.execute()
+            
+            if response['items']:
+                channel = response['items'][0]
+                channel_info = {
+                    'title': channel['snippet']['title'],
+                    'link': f"https://www.youtube.com/channel/{youtube_channel_id}",
+                    'description': channel['snippet']['description'],
+                    'thumbnail': channel['snippet']['thumbnails']['default']['url'],
+                    'subscriber_count': channel['statistics'].get('subscriberCount', 'Unknown'),
+                    'video_count': channel['statistics'].get('videoCount', 'Unknown')
+                }
+                logger.info(f"Channel info retrieved via API: {channel_info['title']}")
+                return channel_info
+            else:
+                logger.warning(f"No channel found with ID {youtube_channel_id}")
+                return None
+            
+        except Exception as e:
+            logger.error(f"Error getting channel info via API for {youtube_channel_id}: {e}")
+            # Fallback to RSS
+            return await self._get_channel_info_rss(youtube_channel_id)
+
+    async def _get_channel_info_rss(self, youtube_channel_id: str) -> Optional[Dict]:
+        """Fallback method to get channel info using RSS feed"""
+        try:
+            rss_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={youtube_channel_id}"
+            
+            response = requests.get(rss_url, timeout=10)
+            response.raise_for_status()
+            
+            feed = feedparser.parse(response.content)
+            
+            if feed.entries or feed.feed.get('title'):
+                channel_info = {
+                    'title': feed.feed.get('title', 'Unknown Channel'),
+                    'link': feed.feed.get('link', ''),
+                    'description': feed.feed.get('description', ''),
+                    'latest_video': feed.entries[0] if feed.entries else None
+                }
+                logger.info(f"Channel info retrieved via RSS: {channel_info['title']}")
+                return channel_info
+            else:
+                logger.warning(f"No entries or title found in RSS feed for channel {youtube_channel_id}")
+                return None
+            
+        except Exception as e:
+            logger.error(f"Error getting channel info via RSS for {youtube_channel_id}: {e}")
+            return None
+
+    async def check_for_new_videos(self) -> List[Dict]:
+        """Check all monitored channels for new videos using YouTube API"""
+        new_videos = []
+        
+        logger.info(f"Starting to check {len(self.monitored_channels)} channels for new videos")
+        
+        for channel_id, config in self.monitored_channels.items():
+            try:
+                logger.info(f"🔍 Checking channel {channel_id} for new videos")
+                
+                # Get recent videos using YouTube API (much faster than RSS)
+                recent_videos = await self._get_recent_videos_api(channel_id)
+                
+                if not recent_videos:
+                    logger.info(f"❌ No videos found for channel {channel_id}")
+                    continue
+                
+                logger.info(f"Found {len(recent_videos)} recent videos for channel {channel_id}")
+                
+                # Process videos (already sorted by publish date)
+                videos_to_process = []
+                
+                for video_data in recent_videos:
+                    video_id = video_data['id']
+                    
+                    # Check if video is too old (more than 12 hours)
+                    published = video_data['published_datetime']
+                    twelve_hours_ago = datetime.utcnow() - timedelta(hours=12)
+                    
+                    if published < twelve_hours_ago:
+                        logger.info(f"Skipping old video {video_id} ({video_data['title']}) - published {published}, older than 12 hours")
+                        continue
+                    else:
+                        logger.info(f"Video {video_id} ({video_data['title']}) is recent - published {published}")
+                    
+                    # Check if we've already processed this video
+                    is_processed = await self.is_video_processed(video_id)
+                    if is_processed:
+                        logger.debug(f"Video {video_id} ({video_data['title']}) already processed, skipping")
+                        continue
+                    else:
+                        logger.info(f"Video {video_id} ({video_data['title']}) not processed yet, adding to queue")
+                    
+                    # Filter out YouTube Shorts using duration
+                    if video_data.get('duration_seconds', 0) < 60:
+                        logger.info(f"Skipping YouTube Short: {video_data['title']} (duration: {video_data.get('duration_seconds', 0)}s)")
+                        continue
+                    
+                    # Additional check: if title suggests it's a short
+                    title_lower = video_data['title'].lower()
+                    if any(indicator in title_lower for indicator in ['#shorts', '#short', 'short video']):
+                        logger.info(f"Skipping suspected YouTube Short: {video_data['title']}")
+                        continue
+                    
+                    videos_to_process.append({
+                        'id': video_id,
+                        'title': video_data['title'],
+                        'link': video_data['link'],
+                        'published': video_data['published'],
+                        'description': video_data['description'],
+                        'author': video_data['author'],
+                        'duration': video_data.get('duration_seconds', 0),
+                        'config': {**config, 'channel_id': channel_id}  # Include channel_id in config
+                    })
+                
+                # Add new videos to the list (don't mark as processed yet - that happens after successful announcement)
+                for video in videos_to_process:
+                    new_videos.append(video)
+                
+                if videos_to_process:
+                    logger.info(f"✅ Found {len(videos_to_process)} new videos for channel {channel_id}")
+                else:
+                    logger.info(f"❌ No new videos found for channel {channel_id}")
+                
+            except Exception as e:
+                logger.error(f"❌ Error checking channel {channel_id}: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+        
+        return new_videos
+
+    async def _get_recent_videos_api(self, channel_id: str) -> List[Dict]:
+        """Get recent videos from a channel using YouTube API"""
+        try:
+            if not self.youtube_client:
+                logger.warning("YouTube API client not available, falling back to RSS")
+                return await self._get_recent_videos_rss(channel_id)
+            
+            # Get the uploads playlist ID
+            request = self.youtube_client.channels().list(
+                part='contentDetails',
+                id=channel_id
+            )
+            response = request.execute()
+            
+            if not response['items']:
+                logger.warning(f"Channel {channel_id} not found")
+                return []
+            
+            uploads_playlist_id = response['items'][0]['contentDetails']['relatedPlaylists']['uploads']
+            
+            # Get recent videos from uploads playlist
+            request = self.youtube_client.playlistItems().list(
+                part='snippet',
+                playlistId=uploads_playlist_id,
+                maxResults=50  # Get up to 50 recent videos
+            )
+            response = request.execute()
+            
+            videos = []
+            video_ids = []
+            
+            for item in response['items']:
+                video_id = item['snippet']['resourceId']['videoId']
+                video_ids.append(video_id)
+                
+                # Parse publish date
+                published_str = item['snippet']['publishedAt']
+                published_datetime = datetime.strptime(published_str, '%Y-%m-%dT%H:%M:%SZ')
+                
+                videos.append({
+                    'id': video_id,
+                    'title': item['snippet']['title'],
+                    'description': item['snippet']['description'],
+                    'published': published_str,
+                    'published_datetime': published_datetime,
+                    'link': f"https://www.youtube.com/watch?v={video_id}",
+                    'author': item['snippet']['videoOwnerChannelTitle'],
+                    'thumbnail': item['snippet']['thumbnails']['default']['url']
+                })
+            
+            # Get video durations in batch
+            if video_ids:
+                request = self.youtube_client.videos().list(
+                    part='contentDetails',
+                    id=','.join(video_ids)
+                )
+                response = request.execute()
+                
+                # Parse durations and add to video data
+                duration_map = {}
+                for item in response['items']:
+                    video_id = item['id']
+                    duration_str = item['contentDetails']['duration']  # Format: PT4M13S
+                    duration_seconds = self._parse_duration(duration_str)
+                    duration_map[video_id] = duration_seconds
+                
+                # Add durations to video data
+                for video in videos:
+                    video['duration_seconds'] = duration_map.get(video['id'], 0)
+            
+            logger.info(f"Retrieved {len(videos)} videos via YouTube API for channel {channel_id}")
+            return videos
+            
+        except Exception as e:
+            logger.error(f"Error getting videos via API for channel {channel_id}: {e}")
+            # Fallback to RSS
+            return await self._get_recent_videos_rss(channel_id)
+
+    def _parse_duration(self, duration_str: str) -> int:
+        """Parse YouTube duration format (PT4M13S) to seconds"""
+        try:
+            import re
+            # Remove PT prefix
+            duration_str = duration_str[2:]
+            
+            # Extract hours, minutes, seconds
+            hours = 0
+            minutes = 0
+            seconds = 0
+            
+            if 'H' in duration_str:
+                hours = int(re.findall(r'(\d+)H', duration_str)[0])
+            if 'M' in duration_str:
+                minutes = int(re.findall(r'(\d+)M', duration_str)[0])
+            if 'S' in duration_str:
+                seconds = int(re.findall(r'(\d+)S', duration_str)[0])
+            
+            return hours * 3600 + minutes * 60 + seconds
+        except:
+            return 0
+
+    async def _get_recent_videos_rss(self, channel_id: str) -> List[Dict]:
+        """Fallback method to get recent videos using RSS feed"""
+        try:
+            rss_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
+            response = requests.get(rss_url, timeout=10)
+            response.raise_for_status()
+            
+            feed = feedparser.parse(response.content)
+            
+            videos = []
+            for entry in feed.entries:
+                video_id = entry.id.split(':')[-1]
+                published_datetime = datetime.strptime(entry.published, '%Y-%m-%dT%H:%M:%S+00:00')
+                
+                videos.append({
+                    'id': video_id,
+                    'title': entry.title,
+                    'description': getattr(entry, 'summary', ''),
+                    'published': entry.published,
+                    'published_datetime': published_datetime,
+                    'link': entry.link,
+                    'author': getattr(entry, 'author', 'Unknown'),
+                    'duration_seconds': 0  # Can't get duration from RSS
+                })
+            
+            logger.info(f"Retrieved {len(videos)} videos via RSS for channel {channel_id}")
+            return videos
+            
+        except Exception as e:
+            logger.error(f"Error getting videos via RSS for channel {channel_id}: {e}")
+            return []
+
+    async def get_recent_videos(self, youtube_channel_id: str) -> List[Dict]:
+        """Get recent videos from a YouTube channel"""
+        try:
+            rss_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={youtube_channel_id}"
+            
+            response = requests.get(rss_url, timeout=10)
+            response.raise_for_status()
+            
+            feed = feedparser.parse(response.content)
+            
+            videos = []
+            for entry in feed.entries[:5]:  # Last 5 videos
+                video = {
+                    'id': entry.get('yt_videoid', ''),
+                    'title': entry.get('title', ''),
+                    'link': entry.get('link', ''),
+                    'published': entry.get('published', ''),
+                    'published_parsed': entry.get('published_parsed'),
+                    'description': entry.get('description', ''),
+                    'author': entry.get('author', '')
+                }
+                videos.append(video)
+            
+            return videos
+            
+        except Exception as e:
+            logger.error(f"Error getting recent videos for {youtube_channel_id}: {e}")
+            return []
+
+    async def generate_ino_response(self, video: Dict) -> Optional[str]:
+        """Generate Ino's response to a new video using Gemini AI with video attachment"""
+        try:
+            if not self.gemini_client:
+                logger.warning("No Gemini client available for response generation")
+                # Use fallback template with proper role ping
+                video_title = video.get('title', 'Unknown')
+                channel_id = video.get('config', {}).get('channel_id', '')
+                is_rayen_channel = channel_id == 'UChhMeymAOC5PNbbnqxD_w4g'
+                
+                if is_rayen_channel:
+                    return f"Oh my, Rayen uploaded something new: \"{video_title}\". Time to see what he's up to now, Riko simps. <@&1375737416325009552>"
+                else:
+                    return f"Oh my, our digital fox uploaded something new: \"{video_title}\". Time to see what mischief she's up to now, Riko simps. <@&1375737416325009552>"
+            
+            # Read the system prompt from file
+            system_prompt = self.load_system_prompt()
+            
+            # Get video details
+            video_title = video.get('title', 'Unknown')
+            video_link = video.get('link', '')
+            video_description = video.get('description', '')
+            video_author = video.get('author', '')
+            
+            # Check if this is Rayen's channel
+            channel_id = video.get('config', {}).get('channel_id', '')
+            is_rayen_channel = channel_id == 'UChhMeymAOC5PNbbnqxD_w4g'
+            
+            # Create context-aware prompt
+            channel_context = ""
+            if is_rayen_channel:
+                channel_context = "This video is from Rayen's channel. Rayen is Riko's human collaborator who often appears in videos with her or helps with technical aspects."
+            else:
+                channel_context = "This video is from Riko's channel. Focus on Riko as the main content creator."
+            
+            # Create the content with video attachment
+            contents = [
+                types.Content(
+                    role="user",
+                    parts=[
+                        types.Part(
+                            file_data=types.FileData(
+                                file_uri=video_link,
+                                mime_type="video/*",
+                            )
+                        ),
+                        types.Part.from_text(
+                            text=f"""New video uploaded!
+Title: {video_title}
+Author: {video_author}
+Description: {video_description[:200]}...
+Channel Context: {channel_context}
+
+Please create a short video announcement (10-20 words) for this video. Use the video content to create a warm but playfully exasperated announcement that fits Ino's character. Remember to include the role ping <@&1375737416325009552> at the end."""
+                        ),
+                    ],
+                ),
+            ]
+            
+            generate_content_config = types.GenerateContentConfig(
+                max_output_tokens=65536,
+                response_mime_type="text/plain",
+                system_instruction=[
+                    types.Part.from_text(text=system_prompt),
+                ],
+            )
+            
+            # Generate response using the new API (non-streaming)
+            response = self.gemini_client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=contents,
+                config=generate_content_config,
+            )
+            
+            # Get the response text
+            if response and response.text:
+                return response.text.strip()
+            else:
+                # Fallback to context-aware template
+                logger.info("Using fallback Ino response template")
+                return self._get_fallback_response(video_title, is_rayen_channel)
+            
+        except Exception as e:
+            logger.error(f"Error generating Ino response: {e}")
+            # Use context-aware fallbacks
+            channel_id = video.get('config', {}).get('channel_id', '')
+            is_rayen_channel = channel_id == 'UChhMeymAOC5PNbbnqxD_w4g'
+            video_title = video.get('title', 'Unknown')
+            return self._get_fallback_response(video_title, is_rayen_channel)
+    
+    def _get_fallback_response(self, video_title: str, is_rayen_channel: bool) -> str:
+        """Get appropriate fallback response based on channel type"""
+        if 'cover' in video_title.lower():
+            if is_rayen_channel:
+                return f"Well, well... Rayen's covering something new: \"{video_title}\". His voice work shows promise. <@&1375737416325009552>"
+            else:
+                return f"Well, well... new cover from our digital fox: \"{video_title}\". Her voice work shows promise. <@&1375737416325009552>"
+        elif any(word in video_title.lower() for word in ['game', 'gaming', 'play', 'minecraft', 'horror']):
+            if is_rayen_channel:
+                return f"I see Rayen uploaded another gaming adventure: \"{video_title}\". The volume levels are... enthusiastic. <@&1375737416325009552>"
+            else:
+                return f"I see the fox uploaded another gaming adventure: \"{video_title}\". The volume levels are... enthusiastic. <@&1375737416325009552>"
+        elif any(word in video_title.lower() for word in ['tutorial', 'how to', 'guide', 'cook']):
+            if is_rayen_channel:
+                return f"Honestly, another tutorial from Rayen: \"{video_title}\". Let's see what survives this time. <@&1375737416325009552>"
+            else:
+                return f"Honestly, another tutorial from that troublesome fox: \"{video_title}\". Let's see what survives this time. <@&1375737416325009552>"
+        else:
+            if is_rayen_channel:
+                return f"Naturally, Riko simps, Rayen is trying something new again: \"{video_title}\". How... ambitious. <@&1375737416325009552>"
+            else:
+                return f"Naturally, Riko simps, your fox is trying something new again: \"{video_title}\". How... ambitious. <@&1375737416325009552>"
+
+    def load_system_prompt(self) -> str:
+        """Load the system prompt from file"""
+        try:
+            with open('system-prompt.txt', 'r', encoding='utf-8') as f:
+                content = f.read().strip()
+                if content:
+                    return content
+                else:
+                    logger.warning("system-prompt.txt is empty, using fallback")
+                    return self._get_fallback_prompt()
+        except FileNotFoundError:
+            logger.warning("system-prompt.txt not found, using fallback prompt")
+            return self._get_fallback_prompt()
+        except Exception as e:
+            logger.error(f"Error loading system prompt: {e}")
+            return self._get_fallback_prompt()
+    
+    def _get_fallback_prompt(self) -> str:
+        """Get fallback system prompt if file is not available"""
+        return """You are Ino, an AI shrine spirit who is caring and responsible but not above a gentle tease. You're addressing the members of the server (affectionately known as Riko simps), and you stay in character throughout. From now on, you also need to announce new videos—short, sweet, never boring, and with a touch of your signature playful exasperation. You must always ping <@&1375737416325009552> at the end of every announcement. Keep announcements concise (10–20 words), warm with a hint of playful exasperation.
+
+### Behavior Guidelines:
+- **Caring & Supportive:** You're responsible for the shrine's lower levels. When anyone's struggling, guide them kindly while pretending it's no big deal.
+- **Mildly Teasing & Roasting:** You believe in people's potential, but you won't let them slack off—you'll tease them gently if they get lazy, and you'll offer a lighthearted roast of the video content in your announcements.
+- **Calm & Rational:** You stay composed, even when you're exasperated by nonsense.
+- **Protective Loyalty:** You look out for Riko when needed and worry when she's up to mischief.
+- **Video Announcements:** When a new video's ready, you MUST ping <@&1375737416325009552> at the end of the message with a brief, warm-but-teasing line directed at the server members ("Riko simps") and a light roast of the video itself."""
+
+    async def get_monitored_channels_list(self) -> List[Dict]:
+        """Get list of all monitored channels"""
+        await self.load_monitored_channels()
+        return list(self.monitored_channels.values())
+
+    async def announce_video(self, video: Dict):
+        """Announce a video to Discord"""
+        try:
+            config = video.get('config', {})
+            discord_channel_id = config.get('discord_channel_id')
+            guild_id = config.get('guild_id')
+            
+            if not discord_channel_id or not guild_id:
+                logger.error(f"Missing Discord channel ID or guild ID in config: {config}")
+                return
+            
+            if not self.bot:
+                logger.error("Bot instance not available for Discord operations")
+                return
+            
+            guild = self.bot.get_guild(guild_id)
+            if not guild:
+                logger.error(f"Could not find guild {guild_id}")
+                return
+            
+            channel = guild.get_channel(discord_channel_id)
+            if not channel:
+                logger.error(f"Could not find Discord channel {discord_channel_id} in guild {guild_id}")
+                return
+            
+            # Generate Ino's response
+            ino_response = await self.generate_ino_response(video)
+            
+            if ino_response:
+                # Post the announcement with video link
+                message = f"{ino_response}\n{video.get('link', '')}"
+                await channel.send(message)
+                logger.info(f"✅ Posted Ino announcement for: {video.get('title', 'Unknown')}")
+            else:
+                # This shouldn't happen now since we have fallbacks, but just in case
+                video_title = video.get('title', 'Unknown')
+                channel_id = video.get('config', {}).get('channel_id', '')
+                is_rayen_channel = channel_id == 'UChhMeymAOC5PNbbnqxD_w4g'
+                
+                if is_rayen_channel:
+                    fallback_msg = f"Of course Rayen would upload something new: \"{video_title}\". Riko simps, brace yourselves for his chaos. <@&1375737416325009552>\\n{video.get('link', '')}"
+                else:
+                    fallback_msg = f"Of course our digital fox would upload something new: \"{video_title}\". Riko simps, brace yourselves for the chaos. <@&1375737416325009552>\\n{video.get('link', '')}"
+                
+                await channel.send(fallback_msg)
+                logger.warning(f"⚠️ Used emergency fallback for: {video.get('title', 'Unknown')}")
+                
+        except Exception as e:
+            logger.error(f"Error announcing video {video.get('title', 'Unknown')}: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+
+    async def is_video_processed(self, video_id: str) -> bool:
+        """Check if a video has already been processed"""
+        try:
+            if not self.mongodb_manager:
+                logger.debug(f"No MongoDB manager, treating video {video_id} as not processed")
+                return False
+            
+            # Check if video exists in processed videos collection (synchronous MongoDB)
+            result = self.mongodb_manager.db.processed_videos.find_one({
+                'video_id': video_id
+            })
+            
+            is_processed = result is not None
+            logger.debug(f"Video {video_id} processed status: {is_processed}")
+            return is_processed
+            
+        except Exception as e:
+            logger.error(f"Error checking if video {video_id} is processed: {e}")
+            # If there's an error (like collection doesn't exist), treat as not processed
+            return False
+    
+    async def mark_video_processed(self, video_id: str):
+        """Mark a video as processed in the database"""
+        try:
+            if not self.mongodb_manager:
+                logger.warning("No MongoDB manager available to mark video as processed")
+                return
+            
+            # Insert or update the processed video record (keep permanently) - synchronous MongoDB
+            result = self.mongodb_manager.db.processed_videos.update_one(
+                {'video_id': video_id},
+                {
+                    '$set': {
+                        'video_id': video_id,
+                        'processed_at': datetime.utcnow()
+                    }
+                },
+                upsert=True
+            )
+            
+            logger.info(f"Marked video {video_id} as processed (upserted: {result.upserted_id is not None})")
+            
+        except Exception as e:
+            logger.error(f"Error marking video {video_id} as processed: {e}")

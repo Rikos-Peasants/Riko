@@ -10,6 +10,8 @@ class Config:
     BANNED_ROLE_ID = int(os.getenv('BANNED_ROLE_ID'))
     RESTRICTED_ROLE_ID = int(os.getenv('RESTRICTED_ROLE_ID'))
     MONGO_URI = os.getenv('MONGO_URI')
+    GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')  # For YouTube video announcements
+    YOUTUBE_API_KEY = os.getenv('YOUTUBE_API_KEY')  # For YouTube Data API
     
     # NSFWBAN system role IDs
     NSFWBAN_MODERATOR_ROLE_ID = 1372477845997359244  # Role that can use nsfwban commands

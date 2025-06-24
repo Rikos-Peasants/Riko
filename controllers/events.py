@@ -382,8 +382,25 @@ class EventsController:
             )
             
             # Update the image message score in MongoDB
-            thumbs_up = sum(1 for r in message.reactions if str(r.emoji) == '👍')
-            thumbs_down = sum(1 for r in message.reactions if str(r.emoji) == '👎')
+            # Count actual human reactions, excluding bot reactions
+            thumbs_up = 0
+            thumbs_down = 0
+            
+            for r in message.reactions:
+                if str(r.emoji) == '👍':
+                    thumbs_up = r.count
+                    # Subtract 1 if bot reacted (bot reactions shouldn't count)
+                    async for u in r.users():
+                        if u.bot:
+                            thumbs_up = max(0, thumbs_up - 1)
+                            break
+                elif str(r.emoji) == '👎':
+                    thumbs_down = r.count
+                    # Subtract 1 if bot reacted (bot reactions shouldn't count)
+                    async for u in r.users():
+                        if u.bot:
+                            thumbs_down = max(0, thumbs_down - 1)
+                            break
             
             await self.bot.leaderboard_manager.update_image_message_score(
                 message_id=str(message.id),
@@ -399,7 +416,7 @@ class EventsController:
             await self._update_quest_progress_rating(user)
             
             action = "added" if added else "removed"
-            logger.debug(f"Reaction {action}: {reaction.emoji} on {message.author.display_name}'s image (score change: {score_change:+d})")
+            logger.info(f"Reaction {action}: {reaction.emoji} on {message.author.display_name}'s image (score change: {score_change:+d}), thumbs_up: {thumbs_up}, thumbs_down: {thumbs_down}")
     
     def initialize_quest_manager(self):
         """Initialize the quest manager (called from bot.py when ready)"""

@@ -28,18 +28,33 @@ class RikoBot(commands.Bot):
             case_insensitive=True
         )
         
-        # Initialize MongoDB-based leaderboard manager
+        # Initialize leaderboard manager based on available database
+        logger.info("🔗 Connecting to database...")
         try:
+            # Try to initialize MongoDB leaderboard manager
             self.leaderboard_manager = MongoLeaderboardManager()
             logger.info("✅ MongoDB leaderboard manager initialized successfully")
-        except Exception as e:
-            logger.error(f"❌ Failed to initialize MongoDB: {e}")
-            raise e
+        except Exception as mongo_error:
+            logger.error(f"❌ Failed to initialize MongoDB manager: {mongo_error}")
+            logger.info("📄 Falling back to JSON leaderboard manager")
+            from models.leaderboard_manager import LeaderboardManager
+            self.leaderboard_manager = LeaderboardManager()
+            logger.info("✅ JSON leaderboard manager initialized successfully")
         
         # Initialize controllers
         self.commands_controller = CommandsController(self)
         self.events_controller = EventsController(self)
         self.scheduler_controller = SchedulerController(self)
+        
+        # Initialize YouTube monitor
+        try:
+            from models.youtube_monitor import YouTubeMonitor
+            self.youtube_monitor = YouTubeMonitor(self.leaderboard_manager)
+            self.youtube_monitor.bot = self  # Pass bot reference
+            logger.info("✅ YouTube monitor initialized successfully")
+        except Exception as e:
+            logger.error(f"❌ Failed to initialize YouTube monitor: {e}")
+            self.youtube_monitor = None
         
         # Funny status messages
         self.status_messages = [
@@ -96,19 +111,31 @@ class RikoBot(commands.Bot):
         try:
             # First try guild-specific sync for faster updates
             guild = discord.Object(id=Config.GUILD_ID)
-            synced_guild = await self.tree.sync(guild=guild)
-            logger.info(f"Successfully synced {len(synced_guild)} commands to guild {Config.GUILD_ID}")
+            try:
+                synced_guild = await self.tree.sync(guild=guild)
+                logger.info(f"Successfully synced {len(synced_guild)} commands to guild {Config.GUILD_ID}")
+            except discord.HTTPException as e:
+                if e.status == 429:  # Rate limited
+                    logger.warning(f"Rate limited syncing to guild, skipping: {e}")
+                else:
+                    logger.error(f"Failed to sync commands to guild: {e}")
             
-            # Also sync globally for other servers
-            synced_global = await self.tree.sync()
-            logger.info(f"Successfully synced {len(synced_global)} commands globally")
-            
-            # List the synced commands
-            for cmd in synced_global:
-                logger.info(f"  - Global command: /{cmd.name} - {cmd.description}")
+            # Also sync globally for other servers (with rate limit handling)
+            try:
+                synced_global = await self.tree.sync()
+                logger.info(f"Successfully synced {len(synced_global)} commands globally")
                 
+                # List the synced commands
+                for cmd in synced_global:
+                    logger.info(f"  - Global command: /{cmd.name} - {cmd.description}")
+            except discord.HTTPException as e:
+                if e.status == 429:  # Rate limited
+                    logger.warning(f"Rate limited syncing globally, commands may not update immediately: {e}")
+                else:
+                    logger.error(f"Failed to sync commands globally: {e}")
+                    
         except Exception as e:
-            logger.error(f"Failed to sync commands: {e}")
+            logger.error(f"Unexpected error during command sync: {e}")
             logger.error("This might be due to missing 'applications.commands' scope")
             logger.error("Please reinvite the bot with proper permissions")
     
