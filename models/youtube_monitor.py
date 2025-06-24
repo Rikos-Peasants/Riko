@@ -242,15 +242,30 @@ class YouTubeMonitor:
                     else:
                         logger.info(f"Video {video_id} ({video_data['title']}) not processed yet, adding to queue")
                     
-                    # Filter out YouTube Shorts using duration
-                    if video_data.get('duration_seconds', 0) < 60:
-                        logger.info(f"Skipping YouTube Short: {video_data['title']} (duration: {video_data.get('duration_seconds', 0)}s)")
+                    # Filter out YouTube Shorts - multiple checks
+                    video_link = video_data.get('link', '')
+                    
+                    # Check 1: URL contains /shorts/
+                    if '/shorts/' in video_link:
+                        logger.info(f"Skipping YouTube Short (URL): {video_data['title']} - {video_link}")
                         continue
                     
-                    # Additional check: if title suggests it's a short
+                    # Check 2: Duration under 60 seconds
+                    if video_data.get('duration_seconds', 0) < 60:
+                        logger.info(f"Skipping YouTube Short (duration): {video_data['title']} (duration: {video_data.get('duration_seconds', 0)}s)")
+                        continue
+                    
+                    # Check 3: Title/description suggests it's a short
                     title_lower = video_data['title'].lower()
-                    if any(indicator in title_lower for indicator in ['#shorts', '#short', 'short video']):
-                        logger.info(f"Skipping suspected YouTube Short: {video_data['title']}")
+                    description_lower = video_data.get('description', '').lower()
+                    short_indicators = ['#shorts', '#short', 'short video', 'youtube short', 'yt short']
+                    
+                    if any(indicator in title_lower for indicator in short_indicators):
+                        logger.info(f"Skipping suspected YouTube Short (title): {video_data['title']}")
+                        continue
+                    
+                    if any(indicator in description_lower for indicator in short_indicators):
+                        logger.info(f"Skipping suspected YouTube Short (description): {video_data['title']}")
                         continue
                     
                     videos_to_process.append({
@@ -496,13 +511,23 @@ UPLOADER/CREATOR: {video_author}
 FULL DESCRIPTION: {video_description}
 CHANNEL: {channel_context}
 
-IMPORTANT: Pay close attention to the UPLOADER/CREATOR name and video content. Remember the lore:
-- Riko is now a DIGITAL SPIRIT trapped in the internet - she CANNOT make physical videos anymore
-- Content BY Rayen (Riko's human collaborator who works in the physical world)
-- A COVER or COLLABORATION by someone else (like "{video_author}")
-- Guest content on the channel
+🚨 CRITICAL: RIKO IS DIGITAL - SHE CANNOT MAKE PHYSICAL VIDEOS! 🚨
 
-Create a short video announcement (10-20 words) that accurately reflects WHO created this content. Since Riko is digital now, any physical video is made by humans - either Rayen, guest artists, or other creators. Never say Riko made a physical video!
+The UPLOADER/CREATOR is: "{video_author}"
+This is a HUMAN who made this physical video, NOT Riko!
+
+CORRECT ATTRIBUTION:
+- If uploader is "YOASOBI" → Say "YOASOBI performed"
+- If uploader is "pikachubolk" → Say "pikachubolk created" 
+- If uploader is "Rayen" → Say "Rayen made"
+- If uploader is anyone else → Use THEIR name
+
+WRONG ATTRIBUTION (NEVER DO THIS):
+- "Riko performed" ❌
+- "Our fox made this" ❌ 
+- "Riko uploaded" ❌
+
+Create a short announcement (10-20 words) using the ACTUAL creator's name "{video_author}", not Riko!
 
 Remember to include the role ping <@&1375737416325009552> at the end."""
                         ),
