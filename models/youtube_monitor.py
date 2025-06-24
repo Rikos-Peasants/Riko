@@ -473,9 +473,9 @@ class YouTubeMonitor:
             # Create context-aware prompt
             channel_context = ""
             if is_rayen_channel:
-                channel_context = "This video is from Rayen's channel. Rayen is Riko's human collaborator."
+                channel_context = "This video is from Rayen's channel. Rayen is Riko's human collaborator who creates content in the physical world since Riko is now a digital spirit."
             else:
-                channel_context = "This video is from Riko's channel."
+                channel_context = "This video is from a channel associated with Riko, but since Riko is now a digital spirit trapped in the internet, physical videos are made by humans like Rayen or guest creators."
             
             # Create the content with video attachment
             contents = [
@@ -496,13 +496,13 @@ UPLOADER/CREATOR: {video_author}
 FULL DESCRIPTION: {video_description}
 CHANNEL: {channel_context}
 
-IMPORTANT: Pay close attention to the UPLOADER/CREATOR name and video content. This might be:
-- Content BY Riko herself
-- Content BY Rayen 
+IMPORTANT: Pay close attention to the UPLOADER/CREATOR name and video content. Remember the lore:
+- Riko is now a DIGITAL SPIRIT trapped in the internet - she CANNOT make physical videos anymore
+- Content BY Rayen (Riko's human collaborator who works in the physical world)
 - A COVER or COLLABORATION by someone else (like "{video_author}")
 - Guest content on the channel
 
-Create a short video announcement (10-20 words) that accurately reflects WHO created this content and WHAT it is. Use the video title, description, and creator name to understand the context. Don't assume it's always Riko or Rayen - acknowledge the actual creator when it's someone else.
+Create a short video announcement (10-20 words) that accurately reflects WHO created this content. Since Riko is digital now, any physical video is made by humans - either Rayen, guest artists, or other creators. Never say Riko made a physical video!
 
 Remember to include the role ping <@&1375737416325009552> at the end."""
                         ),
