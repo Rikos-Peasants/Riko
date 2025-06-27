@@ -2,217 +2,217 @@ import discord
 from discord.ext import commands, tasks
 import asyncio
 import logging
-import random
+from datetime import datetime
+from typing import Optional, TYPE_CHECKING
 from config import Config
-from controllers.commands import CommandsController
-from controllers.events import EventsController
-from controllers.scheduler import SchedulerController
-from models.mongo_leaderboard_manager import MongoLeaderboardManager
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+if TYPE_CHECKING:
+    from controllers.events import EventsController
+    from controllers.commands import CommandsController  
+    from controllers.scheduler import SchedulerController
+    from models.youtube_monitor import YouTubeMonitor
+
+# Always import RandomAnnouncer for runtime use
+from models.random_announcer import RandomAnnouncer
+
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 class RikoBot(commands.Bot):
-    """Main Discord bot class"""
+    """Riko Discord Bot"""
     
     def __init__(self):
         # Define intents
         intents = discord.Intents.default()
-        intents.members = True  # Required for member update events
-        intents.message_content = True  # Required for text commands to work properly
+        intents.message_content = True
+        intents.members = True
+        intents.reactions = True
+        intents.guilds = True
         
+        # Initialize bot with hybrid command support
         super().__init__(
-            command_prefix='R!',  # Text command prefix
+            command_prefix="R!",
             intents=intents,
-            case_insensitive=True
+            case_insensitive=True,
+            help_command=None,
+            activity=discord.Activity(type=discord.ActivityType.watching, name="Discord members"),
+            status=discord.Status.online
         )
         
-        # Initialize leaderboard manager based on available database
-        logger.info("🔗 Connecting to database...")
+        # Initialize components with proper typing
+        self.leaderboard_manager: Optional[object] = None
+        self.events_controller: Optional['EventsController'] = None
+        self.commands_controller: Optional['CommandsController'] = None
+        self.scheduler_controller: Optional['SchedulerController'] = None
+        self.youtube_monitor: Optional['YouTubeMonitor'] = None
+        self.random_announcer: Optional['RandomAnnouncer'] = None
+        
+        # Initialize leaderboard manager first (required by other components)
         try:
-            # Try to initialize MongoDB leaderboard manager
+            from models.mongo_leaderboard_manager import MongoLeaderboardManager
             self.leaderboard_manager = MongoLeaderboardManager()
             logger.info("✅ MongoDB leaderboard manager initialized successfully")
-        except Exception as mongo_error:
-            logger.error(f"❌ Failed to initialize MongoDB manager: {mongo_error}")
-            logger.info("📄 Falling back to JSON leaderboard manager")
-            from models.leaderboard_manager import LeaderboardManager
-            self.leaderboard_manager = LeaderboardManager()
-            logger.info("✅ JSON leaderboard manager initialized successfully")
-        
-        # Initialize controllers
-        self.commands_controller = CommandsController(self)
-        self.events_controller = EventsController(self)
-        self.scheduler_controller = SchedulerController(self)
+        except Exception as e:
+            logger.error(f"❌ Failed to initialize MongoDB leaderboard manager: {e}")
+            # Fallback to JSON-based leaderboard manager
+            try:
+                from models.leaderboard_manager import LeaderboardManager
+                self.leaderboard_manager = LeaderboardManager()
+                logger.info("✅ JSON leaderboard manager initialized as fallback")
+            except Exception as e2:
+                logger.error(f"❌ Failed to initialize fallback leaderboard manager: {e2}")
+                self.leaderboard_manager = None
         
         # Initialize YouTube monitor
         try:
             from models.youtube_monitor import YouTubeMonitor
-            self.youtube_monitor = YouTubeMonitor(self.leaderboard_manager)
-            self.youtube_monitor.bot = self  # Pass bot reference
+            from models.mongo_leaderboard_manager import MongoLeaderboardManager
+            # Only pass MongoDB manager if it's the right type
+            if isinstance(self.leaderboard_manager, MongoLeaderboardManager):
+                self.youtube_monitor = YouTubeMonitor(self.leaderboard_manager)
+            else:
+                self.youtube_monitor = YouTubeMonitor(None)
+            # The YouTubeMonitor will set its own bot reference when needed
             logger.info("✅ YouTube monitor initialized successfully")
         except Exception as e:
             logger.error(f"❌ Failed to initialize YouTube monitor: {e}")
             self.youtube_monitor = None
         
-        # Funny status messages
-        self.status_messages = [
-            ("watching", "over {users} Riko Simps"),
-            ("listening", "to Rayen's New Proposals"),
-            ("watching", "Angel be mad at Taishi"),
-            ("listening", "to random people yap in DMs"),
-            ("watching", "new messages & ideas pile up"),
-            ("playing", "with role permissions"),
-            ("watching", "for troublemakers"),
-            ("listening", "to the sound of silence"),
-            ("watching", "paint dry (more fun than modding)"),
-            ("playing", "hide and seek with bugs"),
-            ("listening", "to the screams of banned users"),
-            ("watching", "chaos unfold in general chat"),
-            ("playing", "therapist for drama queens"),
-            ("watching", "people argue about pineapple on pizza"),
-            ("listening", "to excuses from rule breakers"),
-            ("watching", "memes get overused"),
-            ("playing", "whack-a-mole with spammers"),
-            ("watching", "people simp for anime characters"),
-            ("listening", "to theories about everything"),
-            ("watching", "the admin's sanity deteriorate")
-        ]
-    
+        # Initialize Random Announcer (TEMPORARY FOR RESEARCH)
+        try:
+            self.random_announcer = RandomAnnouncer(self, self.leaderboard_manager)
+            logger.info("✅ Random announcer initialized successfully")
+        except Exception as e:
+            logger.error(f"❌ Failed to initialize random announcer: {e}")
+            self.random_announcer = None
+        
+        # Initialize controllers
+        from controllers.events import EventsController
+        from controllers.commands import CommandsController  
+        from controllers.scheduler import SchedulerController
+        
+        self.events_controller = EventsController(self)
+        self.commands_controller = CommandsController(self)
+        self.scheduler_controller = SchedulerController(self)
+        
     async def setup_hook(self):
-        """Setup hook called when bot is starting"""
+        """Initial setup when bot is starting"""
         logger.info("Setting up bot...")
         
-        # Register commands and events FIRST
-        logger.info("Registering commands...")
-        self.commands_controller.register_commands()
-        logger.info("Registering events...")
-        self.events_controller.register_events()
+        # Register events and commands
+        if self.events_controller:
+            self.events_controller.register_events()
+        if self.commands_controller:
+            self.commands_controller.register_commands()
         
-        # Debug: List all registered text commands
-        logger.info(f"Text commands registered: {len(self.commands)}")
-        for cmd in self.commands:
-            logger.info(f"  - Text command: R!{cmd.name}")
+        # Initialize quest manager after bot is ready
+        if self.events_controller:
+            self.events_controller.initialize_quest_manager()
         
-        # Wait for registration to complete
-        await asyncio.sleep(0.5)
+        logger.info("Bot setup completed")
+    
+    async def on_ready(self):
+        """Bot is ready and connected"""
+        if not self.user:
+            logger.error("Bot user is None - something went wrong during login")
+            return
+            
+        logger.info(f"✅ Logged in as {self.user} (ID: {self.user.id})")
+        logger.info(f"✅ Connected to {len(self.guilds)} guilds")
         
-        # Show registered commands for debugging
-        logger.info(f"Registered {len(self.tree.get_commands())} app commands globally")
-        logger.info(f"Registered {len(self.tree.get_commands(guild=discord.Object(id=Config.GUILD_ID)))} app commands for guild")
+        # Debug: List all available commands
+        logger.info("📋 Available commands:")
+        for cmd_name in sorted(self.all_commands.keys()):
+            logger.info(f"  - Text command: R!{cmd_name}")
         
         # Debug: List all app commands
         for cmd in self.tree.get_commands():
-            logger.info(f"  - App command: /{cmd.name} - {cmd.description}")
+            description = getattr(cmd, 'description', 'No description') if hasattr(cmd, 'description') else 'No description'
+            logger.info(f"  - App command: /{cmd.name} - {description}")
         
         # Sync commands to enable slash command functionality
         logger.info("Syncing hybrid commands...")
         try:
-            # First try guild-specific sync for faster updates
-            guild = discord.Object(id=Config.GUILD_ID)
-            try:
-                synced_guild = await self.tree.sync(guild=guild)
-                logger.info(f"Successfully synced {len(synced_guild)} commands to guild {Config.GUILD_ID}")
-            except discord.HTTPException as e:
-                if e.status == 429:  # Rate limited
-                    logger.warning(f"Rate limited syncing to guild, skipping: {e}")
-                else:
-                    logger.error(f"Failed to sync commands to guild: {e}")
-            
-            # Also sync globally for other servers (with rate limit handling)
-            try:
-                synced_global = await self.tree.sync()
-                logger.info(f"Successfully synced {len(synced_global)} commands globally")
-                
-                # List the synced commands
-                for cmd in synced_global:
-                    logger.info(f"  - Global command: /{cmd.name} - {cmd.description}")
-            except discord.HTTPException as e:
-                if e.status == 429:  # Rate limited
-                    logger.warning(f"Rate limited syncing globally, commands may not update immediately: {e}")
-                else:
-                    logger.error(f"Failed to sync commands globally: {e}")
-                    
+            synced = await self.tree.sync()
+            logger.info(f"✅ Synced {len(synced)} hybrid commands")
         except Exception as e:
-            logger.error(f"Unexpected error during command sync: {e}")
-            logger.error("This might be due to missing 'applications.commands' scope")
-            logger.error("Please reinvite the bot with proper permissions")
-    
-    async def on_ready(self):
-        """Called when bot is ready"""
-        logger.info(f'{self.user} has logged in!')
-        logger.info(f'Bot is in {len(self.guilds)} guilds')
-        logger.info(f'Text command prefix: R!')
-        logger.info(f'Commands available as both text (R!command) and slash (/command)')
-        
-        # Generate proper invite URL
-        bot_id = self.user.id if self.user else "YOUR_BOT_ID"
-        invite_url = f"https://discord.com/api/oauth2/authorize?client_id={bot_id}&permissions=268437568&scope=bot%20applications.commands"
-        logger.info(f"Bot invite URL (with applications.commands): {invite_url}")
-        
-        # Start the status cycling task
-        if not self.cycle_status.is_running():
-            self.cycle_status.start()
-        
-        # Initialize quest manager in events controller
-        self.events_controller.initialize_quest_manager()
-        logger.info("Quest manager initialized")
+            logger.error(f"❌ Failed to sync commands: {e}")
         
         # Start scheduler tasks for best image posting
-        self.scheduler_controller.start_tasks()
-        logger.info("Started scheduled tasks for best image posting")
-        logger.info("Best images will be posted back to their original channels")
+        if self.scheduler_controller:
+            self.scheduler_controller.start_tasks()
+            logger.info("Started scheduled tasks for best image posting")
+            logger.info("Best images will be posted back to their original channels")
+        
+        # Start random announcements (TEMPORARY FOR RESEARCH)
+        if self.random_announcer:
+            self.random_announcer.start_announcements()
+            logger.info("Started random announcement system - TEMPORARY FOR RESEARCH")
+            logger.info("Random announcements will be posted every 15 minutes with feedback buttons")
+        
+        # Start status cycling
+        self.cycle_status.start()
+        logger.info("Status cycling started")
+        
+        logger.info("🚀 Bot is fully ready and operational!")
     
     @tasks.loop(minutes=2)  # Change status every 2 minutes
     async def cycle_status(self):
-        """Cycle through different funny status messages"""
-        try:
-            # Get the guild to count members
-            guild = self.get_guild(Config.GUILD_ID)
-            member_count = guild.member_count if guild else "unknown"
+        """Cycle through different bot statuses"""
+        if not self.user:
+            return
             
-            # Pick a random status
-            activity_type, message = random.choice(self.status_messages)
-            
-            # Format the message with member count if needed
-            formatted_message = message.format(users=member_count)
-            
-            # Set the appropriate activity type
-            if activity_type == "watching":
-                activity = discord.Activity(type=discord.ActivityType.watching, name=formatted_message)
-            elif activity_type == "listening":
-                activity = discord.Activity(type=discord.ActivityType.listening, name=formatted_message)
-            elif activity_type == "playing":
-                activity = discord.Activity(type=discord.ActivityType.playing, name=formatted_message)
-            else:
-                activity = discord.Activity(type=discord.ActivityType.watching, name=formatted_message)
-            
-            await self.change_presence(activity=activity, status=discord.Status.online)
-            logger.info(f"Status changed to: {activity_type.title()} {formatted_message}")
-            
-        except Exception as e:
-            logger.error(f"Error changing status: {e}")
+        statuses = [
+            discord.Activity(type=discord.ActivityType.watching, name="Discord members"),
+            discord.Activity(type=discord.ActivityType.watching, name="image reactions"),
+            discord.Activity(type=discord.ActivityType.playing, name="with image leaderboards"),
+            discord.Activity(type=discord.ActivityType.listening, name="R! commands"),
+            discord.Activity(type=discord.ActivityType.watching, name="for new YouTube videos"),
+            discord.Activity(type=discord.ActivityType.playing, name="image rating games")
+        ]
+        
+        import random
+        activity = random.choice(statuses)
+        await self.change_presence(activity=activity, status=discord.Status.online)
+        logger.debug(f"Changed status to: {activity.name}")
     
     @cycle_status.before_loop
     async def before_cycle_status(self):
-        """Wait until the bot is ready before starting status cycling"""
+        """Wait for bot to be ready before starting status cycling"""
         await self.wait_until_ready()
-
+    
     async def close(self):
-        """Called when bot is shutting down"""
-        logger.info("Shutting down bot...")
+        """Clean shutdown"""
+        logger.info("Bot is shutting down...")
+        
+        # Stop status cycling
+        if self.cycle_status.is_running():
+            self.cycle_status.cancel()
         
         # Stop scheduler tasks
-        self.scheduler_controller.stop_tasks()
+        if self.scheduler_controller:
+            self.scheduler_controller.stop_tasks()
+        
+        # Stop random announcements (TEMPORARY FOR RESEARCH)
+        if hasattr(self, 'random_announcer') and self.random_announcer:
+            self.random_announcer.stop_announcements()
+            logger.info("Stopped random announcement system")
         
         # Close MongoDB connection
-        if hasattr(self, 'leaderboard_manager'):
-            self.leaderboard_manager.close()
-            logger.info("MongoDB connection closed")
+        if hasattr(self, 'leaderboard_manager') and self.leaderboard_manager:
+            # Check if it's MongoDB manager which has close method
+            from models.mongo_leaderboard_manager import MongoLeaderboardManager
+            if isinstance(self.leaderboard_manager, MongoLeaderboardManager):
+                self.leaderboard_manager.close()
+                logger.info("MongoDB connection closed")
         
         # Call parent close
         await super().close()
+        logger.info("Bot shutdown complete")
 
 async def main():
     """Main function to run the bot"""
@@ -222,7 +222,10 @@ async def main():
         
         # Create and run bot
         bot = RikoBot()
-        await bot.start(Config.TOKEN)
+        if Config.TOKEN:
+            await bot.start(Config.TOKEN)
+        else:
+            logger.error("Discord token is not configured")
         
     except ValueError as e:
         logger.error(f"Configuration error: {e}")

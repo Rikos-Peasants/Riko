@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands
 from datetime import datetime, timedelta
 import logging
+from typing import Optional, Union
 from models.role_manager import RoleManager
 from views.embeds import EmbedViews
 from config import Config
@@ -14,6 +15,26 @@ class CommandsController:
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.start_time = datetime.utcnow()
+    
+    def get_bot_attr(self, attr_name: str) -> Optional[object]:
+        """Safely get bot attribute"""
+        return getattr(self.bot, attr_name, None) if hasattr(self.bot, attr_name) else None
+    
+    def get_leaderboard_manager(self):
+        """Safely get leaderboard manager"""
+        return getattr(self.bot, 'leaderboard_manager', None)
+    
+    def get_scheduler_controller(self):
+        """Safely get scheduler controller"""
+        return getattr(self.bot, 'scheduler_controller', None)
+    
+    def get_events_controller(self):
+        """Safely get events controller"""
+        return getattr(self.bot, 'events_controller', None)
+    
+    def get_random_announcer(self):
+        """Safely get random announcer"""
+        return getattr(self.bot, 'random_announcer', None)
     
     def register_commands(self):
         """Register all hybrid commands (both text and slash)"""
@@ -75,6 +96,16 @@ class CommandsController:
                         await ctx.send(error_msg)
                     return
                 
+                # Check if leaderboard manager is available
+                leaderboard_manager = getattr(self.bot, 'leaderboard_manager', None)
+                if not leaderboard_manager:
+                    error_msg = "Leaderboard manager is not available."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
                 # Send initial status
                 status_msg = "🔄 Processing old images from the past year...\nThis may take several minutes..."
                 if hasattr(ctx, 'followup'):
@@ -89,7 +120,7 @@ class CommandsController:
                 total_users = set()
                 
                 # Get bot user ID to exclude bot reactions
-                bot_user_id = self.bot.user.id
+                bot_user_id = self.bot.user.id if self.bot.user else 0
                 
                 for channel_id in Config.IMAGE_REACTION_CHANNELS:
                     channel = guild.get_channel(channel_id)
@@ -141,10 +172,11 @@ class CommandsController:
                             
                             if has_image:
                                 # Check if this message is already processed to avoid duplicates
-                                if await self.bot.leaderboard_manager.image_message_exists(str(message.id)):
-                                    print(f"   ⏭️ Skipping already processed image from {message.author.display_name}")
-                                    total_skipped += 1
-                                    continue
+                                if hasattr(leaderboard_manager, 'image_message_exists'):
+                                    if await leaderboard_manager.image_message_exists(str(message.id)):
+                                        print(f"   ⏭️ Skipping already processed image from {message.author.display_name}")
+                                        total_skipped += 1
+                                        continue
                                 
                                 # Extract image URL for database storage
                                 image_url = None
@@ -189,21 +221,21 @@ class CommandsController:
                                 
                                 # Store the image message in MongoDB database
                                 if image_url:
-                                    await self.bot.leaderboard_manager.store_image_message(
+                                    await leaderboard_manager.store_image_message(
                                         message=message,
                                         image_url=image_url,
                                         initial_score=net_score
                                     )
                                     
                                     # Update the image message score with current reactions
-                                    await self.bot.leaderboard_manager.update_image_message_score(
+                                    await leaderboard_manager.update_image_message_score(
                                         message_id=str(message.id),
                                         thumbs_up=thumbs_up,
                                         thumbs_down=thumbs_down
                                     )
                                 
                                 # Add to leaderboard (this will create or update the user)
-                                self.bot.leaderboard_manager.add_image_post(
+                                leaderboard_manager.add_image_post(
                                     user_id=message.author.id,
                                     user_name=message.author.display_name,
                                     initial_score=net_score
@@ -273,7 +305,16 @@ class CommandsController:
                     end_date = now
                 
                 # Use the scheduler controller to post the best image
-                await self.bot.scheduler_controller._post_best_image("week", start_date, end_date)
+                scheduler_controller = getattr(self.bot, 'scheduler_controller', None)
+                if scheduler_controller:
+                    await scheduler_controller._post_best_image("week", start_date, end_date)
+                else:
+                    error_msg = "Scheduler controller is not available."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
                 
                 # Send response based on command type
                 if hasattr(ctx, 'followup'):
@@ -313,13 +354,21 @@ class CommandsController:
                     end_date = now
                 
                 # Use the scheduler controller to post the best image
-                await self.bot.scheduler_controller._post_best_image("month", start_date, end_date)
-                
-                # Send response based on command type
-                if hasattr(ctx, 'followup'):
-                    await ctx.followup.send("✅ Best image of the month has been posted to each image channel!", ephemeral=True)
+                scheduler_controller = self.get_scheduler_controller()
+                if scheduler_controller:
+                    await scheduler_controller._post_best_image("month", start_date, end_date)
+                    
+                    # Send response based on command type
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send("✅ Best image of the month has been posted to each image channel!", ephemeral=True)
+                    else:
+                        await ctx.send("✅ Best image of the month has been posted to each image channel!")
                 else:
-                    await ctx.send("✅ Best image of the month has been posted to each image channel!")
+                    error_msg = "Scheduler controller is not available."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
                 
             except Exception as e:
                 error_embed = EmbedViews.error_embed(f"Failed to post best image: {str(e)}")
@@ -343,7 +392,16 @@ class CommandsController:
                 start_date = now.replace(month=1, day=1)  # First day of current year
                 
                 # Use the scheduler controller to post the best image
-                await self.bot.scheduler_controller._post_best_image("year", start_date, end_date)
+                scheduler_controller = self.get_scheduler_controller()
+                if scheduler_controller:
+                    await scheduler_controller._post_best_image("year", start_date, end_date)
+                else:
+                    error_msg = "Scheduler controller is not available."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
                 
                 # Send response based on command type
                 if hasattr(ctx, 'followup'):
@@ -376,13 +434,22 @@ class CommandsController:
                     return
                 
                 # Get leaderboard data from JSON file (fast!)
-                leaderboard_data = self.bot.leaderboard_manager.get_leaderboard(limit=10)
+                leaderboard_manager = self.get_leaderboard_manager()
+                if not leaderboard_manager:
+                    error_msg = "Leaderboard manager is not available."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                leaderboard_data = leaderboard_manager.get_leaderboard(limit=10)
                 
                 # Create and send embed
                 embed = EmbedViews.leaderboard_embed(leaderboard_data, "all time")
                 
                 # Add stats summary
-                stats = self.bot.leaderboard_manager.get_stats_summary()
+                stats = leaderboard_manager.get_stats_summary()
                 embed.add_field(
                     name="📊 Server Stats",
                     value=f"**Total Users:** {stats['total_users']}\n"
@@ -405,13 +472,22 @@ class CommandsController:
                     await ctx.send(embed=error_embed)
         
         @self.bot.hybrid_command(name="stats", description="Show your image posting statistics")
-        async def stats_command(ctx, user: discord.Member = None):
+        async def stats_command(ctx, user: Optional[discord.Member] = None):
             """Show stats for yourself or another user"""
             try:
                 target_user = user if user else ctx.author
                 
                 # Get user stats
-                stats = self.bot.leaderboard_manager.get_user_stats(target_user.id)
+                leaderboard_manager = self.get_leaderboard_manager()
+                if not leaderboard_manager:
+                    error_msg = "Leaderboard manager is not available."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                stats = leaderboard_manager.get_user_stats(target_user.id)
                 
                 if not stats:
                     message = f"No image posting stats found for {target_user.display_name}."
@@ -474,7 +550,16 @@ class CommandsController:
                     await ctx.defer(ephemeral=True)
                 
                 # Test MongoDB connection and get stats
-                stats = self.bot.leaderboard_manager.get_stats_summary()
+                leaderboard_manager = self.get_leaderboard_manager()
+                if not leaderboard_manager:
+                    error_msg = "Leaderboard manager is not available."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                stats = leaderboard_manager.get_stats_summary()
                 
                 embed = discord.Embed(
                     title="🗄️ MongoDB Status",
@@ -579,7 +664,16 @@ class CommandsController:
                     return
                 
                 # Check if user is already NSFWBAN'd
-                if await self.bot.leaderboard_manager.is_nsfwban_user(user.id):
+                leaderboard_manager = self.get_leaderboard_manager()
+                if not leaderboard_manager:
+                    error_msg = "Leaderboard manager is not available."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                if await leaderboard_manager.is_nsfwban_user(user.id):
                     error_msg = f"❌ {user.display_name} is already NSFWBAN'd!"
                     if hasattr(ctx, 'followup'):
                         await ctx.followup.send(error_msg, ephemeral=True)
@@ -616,11 +710,21 @@ class CommandsController:
                     return
                 
                 # Add user to database
-                success = await self.bot.leaderboard_manager.add_nsfwban_user(
+                leaderboard_manager = self.get_leaderboard_manager()
+                if not leaderboard_manager:
+                    error_msg = "Leaderboard manager is not available."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                success = await leaderboard_manager.add_nsfwban_user(
                     user_id=user.id,
                     user_name=user.display_name,
                     banned_by_id=ctx.author.id,
                     banned_by_name=ctx.author.display_name,
+                    guild_id=ctx.guild.id,
                     reason=reason
                 )
                 
@@ -675,7 +779,16 @@ class CommandsController:
                     return
                 
                 # Check if user is NSFWBAN'd
-                if not await self.bot.leaderboard_manager.is_nsfwban_user(user.id):
+                leaderboard_manager = self.get_leaderboard_manager()
+                if not leaderboard_manager:
+                    error_msg = "Leaderboard manager is not available."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                if not await leaderboard_manager.is_nsfwban_user(user.id):
                     error_msg = f"❌ {user.display_name} is not NSFWBAN'd!"
                     if hasattr(ctx, 'followup'):
                         await ctx.followup.send(error_msg, ephemeral=True)
@@ -712,7 +825,7 @@ class CommandsController:
                     return
                 
                 # Remove user from database
-                success = await self.bot.leaderboard_manager.remove_nsfwban_user(user.id)
+                success = await leaderboard_manager.remove_nsfwban_user(user.id)
                 
                 if not success:
                     error_msg = "❌ Failed to remove ban from database!"
@@ -807,12 +920,21 @@ class CommandsController:
                     return
                 
                 # Add the warning to database
-                warning_result = await self.bot.leaderboard_manager.add_warning(
+                leaderboard_manager = self.get_leaderboard_manager()
+                if not leaderboard_manager:
+                    error_msg = "Leaderboard manager is not available."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                warning_result = await leaderboard_manager.add_warning(
                     guild_id=ctx.guild.id,
                     user_id=user.id,
                     user_name=user.display_name,
-                    moderator_id=ctx.author.id,
-                    moderator_name=ctx.author.display_name,
+                    warned_by_id=ctx.author.id,
+                    warned_by_name=ctx.author.display_name,
                     reason=reason
                 )
                 
@@ -854,15 +976,17 @@ class CommandsController:
                 
                 # Send log message to configured log channel
                 try:
-                    log_channel_id = await self.bot.leaderboard_manager.get_warning_log_channel(ctx.guild.id)
-                    if log_channel_id:
-                        log_channel = ctx.guild.get_channel(log_channel_id)
-                        if log_channel:
-                            log_embed = EmbedViews.warning_log_embed(user, ctx.author, reason, warning_count, action)
-                            await log_channel.send(embed=log_embed)
-                            logger.info(f"Warning logged to #{log_channel.name} for {user.display_name}")
-                        else:
-                            logger.warning(f"Warning log channel {log_channel_id} not found in guild {ctx.guild.name}")
+                    leaderboard_manager = self.get_leaderboard_manager()
+                    if leaderboard_manager:
+                        log_channel_id = await leaderboard_manager.get_warning_log_channel(ctx.guild.id)
+                        if log_channel_id:
+                            log_channel = ctx.guild.get_channel(log_channel_id)
+                            if log_channel:
+                                log_embed = EmbedViews.warning_log_embed(user, ctx.author, reason, warning_count, action)
+                                await log_channel.send(embed=log_embed)
+                                logger.info(f"Warning logged to #{log_channel.name} for {user.display_name}")
+                            else:
+                                logger.warning(f"Warning log channel {log_channel_id} not found in guild {ctx.guild.name}")
                 except Exception as e:
                     logger.error(f"Failed to send warning log: {e}")
                 
@@ -921,8 +1045,17 @@ class CommandsController:
                     return
                 
                 # Get warnings for the user
-                warnings = await self.bot.leaderboard_manager.get_user_warnings(ctx.guild.id, user.id)
-                warning_count = await self.bot.leaderboard_manager.get_warning_count(ctx.guild.id, user.id)
+                leaderboard_manager = self.get_leaderboard_manager()
+                if not leaderboard_manager:
+                    error_msg = "Leaderboard manager is not available."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                warnings = await leaderboard_manager.get_user_warnings(ctx.guild.id, user.id)
+                warning_count = await leaderboard_manager.get_warning_count(ctx.guild.id, user.id)
                 
                 # Create and send embed
                 embed = EmbedViews.user_warnings_embed(user, warnings, warning_count)
@@ -957,7 +1090,16 @@ class CommandsController:
                     return
                 
                 # Clear warnings for the user
-                cleared_count = await self.bot.leaderboard_manager.clear_user_warnings(ctx.guild.id, user.id)
+                leaderboard_manager = self.get_leaderboard_manager()
+                if not leaderboard_manager:
+                    error_msg = "Leaderboard manager is not available."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                cleared_count = await leaderboard_manager.clear_user_warnings(ctx.guild.id, user.id)
                 
                 if cleared_count == 0:
                     error_msg = f"❌ {user.display_name} has no active warnings to clear."
@@ -976,7 +1118,9 @@ class CommandsController:
                 
                 # Send log message to configured log channel
                 try:
-                    log_channel_id = await self.bot.leaderboard_manager.get_warning_log_channel(ctx.guild.id)
+                    leaderboard_manager = self.get_leaderboard_manager()
+                    if leaderboard_manager:
+                        log_channel_id = await leaderboard_manager.get_warning_log_channel(ctx.guild.id)
                     if log_channel_id:
                         log_channel = ctx.guild.get_channel(log_channel_id)
                         if log_channel:
@@ -1028,12 +1172,13 @@ class CommandsController:
             """View or generate daily quests for the user"""
             try:
                 # Check if quest manager is available
-                if not hasattr(self.bot, 'events_controller') or not self.bot.events_controller.quest_manager:
+                events_controller = self.get_events_controller()
+                if not events_controller or not events_controller.quest_manager:
                     error_embed = EmbedViews.error_embed("Quest system is not available at the moment.")
                     await ctx.send(embed=error_embed, ephemeral=True)
                     return
                 
-                quest_manager = self.bot.events_controller.quest_manager
+                quest_manager = events_controller.quest_manager
                 user_id = ctx.author.id
                 
                 # Get or generate daily quests
@@ -1051,16 +1196,17 @@ class CommandsController:
                 await ctx.send(embed=error_embed, ephemeral=True)
         
         @self.bot.hybrid_command(name="achievements", description="View your achievements")
-        async def achievements_command(ctx, user: discord.Member = None):
+        async def achievements_command(ctx, user: Optional[discord.Member] = None):
             """View achievements for yourself or another user"""
             try:
                 # Check if quest manager is available
-                if not hasattr(self.bot, 'events_controller') or not self.bot.events_controller.quest_manager:
+                events_controller = self.get_events_controller()
+                if not events_controller or not events_controller.quest_manager:
                     error_embed = EmbedViews.error_embed("Achievement system is not available at the moment.")
                     await ctx.send(embed=error_embed, ephemeral=True)
                     return
                 
-                quest_manager = self.bot.events_controller.quest_manager
+                quest_manager = events_controller.quest_manager
                 target_user = user or ctx.author
                 
                 # Get user achievements
@@ -1076,16 +1222,17 @@ class CommandsController:
                 await ctx.send(embed=error_embed, ephemeral=True)
         
         @self.bot.hybrid_command(name="streaks", description="View your streaks and consistency stats")
-        async def streaks_command(ctx, user: discord.Member = None):
+        async def streaks_command(ctx, user: Optional[discord.Member] = None):
             """View streaks for yourself or another user"""
             try:
                 # Check if quest manager is available
-                if not hasattr(self.bot, 'events_controller') or not self.bot.events_controller.quest_manager:
+                events_controller = self.get_events_controller()
+                if not events_controller or not events_controller.quest_manager:
                     error_embed = EmbedViews.error_embed("Streak system is not available at the moment.")
                     await ctx.send(embed=error_embed, ephemeral=True)
                     return
                 
-                quest_manager = self.bot.events_controller.quest_manager
+                quest_manager = events_controller.quest_manager
                 target_user = user or ctx.author
                 
                 # Get user streaks
@@ -1105,12 +1252,13 @@ class CommandsController:
             """View all active image contest events"""
             try:
                 # Check if quest manager is available
-                if not hasattr(self.bot, 'events_controller') or not self.bot.events_controller.quest_manager:
+                events_controller = self.get_events_controller()
+                if not events_controller or not events_controller.quest_manager:
                     error_embed = EmbedViews.error_embed("Events system is not available at the moment.")
                     await ctx.send(embed=error_embed, ephemeral=True)
                     return
                 
-                quest_manager = self.bot.events_controller.quest_manager
+                quest_manager = events_controller.quest_manager
                 
                 # Get active events
                 events = await quest_manager.get_active_events()
@@ -1130,7 +1278,8 @@ class CommandsController:
             """Create a new image contest event"""
             try:
                 # Check if quest manager is available
-                if not hasattr(self.bot, 'events_controller') or not self.bot.events_controller.quest_manager:
+                events_controller = self.get_events_controller()
+                if not events_controller or not events_controller.quest_manager:
                     error_embed = EmbedViews.error_embed("Events system is not available at the moment.")
                     await ctx.send(embed=error_embed, ephemeral=True)
                     return
@@ -1151,7 +1300,13 @@ class CommandsController:
                     await ctx.send(embed=error_embed, ephemeral=True)
                     return
                 
-                quest_manager = self.bot.events_controller.quest_manager
+                events_controller = self.get_events_controller()
+                if not events_controller or not events_controller.quest_manager:
+                    error_embed = EmbedViews.error_embed("Events system is not available at the moment.")
+                    await ctx.send(embed=error_embed, ephemeral=True)
+                    return
+                
+                quest_manager = events_controller.quest_manager
                 
                 # Calculate start and end dates
                 from datetime import datetime, timedelta
@@ -1199,12 +1354,13 @@ class CommandsController:
             """End an active event and announce the winner"""
             try:
                 # Check if quest manager is available
-                if not hasattr(self.bot, 'events_controller') or not self.bot.events_controller.quest_manager:
+                events_controller = self.get_events_controller()
+                if not events_controller or not events_controller.quest_manager:
                     error_embed = EmbedViews.error_embed("Events system is not available at the moment.")
                     await ctx.send(embed=error_embed, ephemeral=True)
                     return
                 
-                quest_manager = self.bot.events_controller.quest_manager
+                quest_manager = events_controller.quest_manager
                 
                 # Find the event by name
                 active_events = await quest_manager.get_active_events()
@@ -1221,9 +1377,10 @@ class CommandsController:
                     return
                 
                 # End the event
+                leaderboard_manager = self.get_leaderboard_manager()
                 result = await quest_manager.end_event(
                     event_id=str(target_event['_id']),
-                    leaderboard_manager=self.bot.leaderboard_manager
+                    leaderboard_manager=leaderboard_manager
                 )
                 
                 if not result:
@@ -1244,7 +1401,7 @@ class CommandsController:
 
         @self.bot.hybrid_command(name="setlogchannel", description="Set the channel for warning logs (Manage Server permission required)")
         @can_warn()
-        async def setlogchannel_command(ctx, channel: discord.TextChannel = None):
+        async def setlogchannel_command(ctx, channel: Optional[discord.TextChannel] = None):
             """Set or view the warning log channel"""
             try:
                 # Check if this is a slash command (has defer) or text command
@@ -1262,7 +1419,16 @@ class CommandsController:
                 
                 # If no channel provided, show current setting
                 if channel is None:
-                    current_channel_id = await self.bot.leaderboard_manager.get_warning_log_channel(ctx.guild.id)
+                    leaderboard_manager = self.get_leaderboard_manager()
+                    if not leaderboard_manager:
+                        error_msg = "Leaderboard manager is not available."
+                        if hasattr(ctx, 'followup'):
+                            await ctx.followup.send(error_msg, ephemeral=True)
+                        else:
+                            await ctx.send(error_msg)
+                        return
+                    
+                    current_channel_id = await leaderboard_manager.get_warning_log_channel(ctx.guild.id)
                     if current_channel_id:
                         current_channel = ctx.guild.get_channel(current_channel_id)
                         if current_channel:
@@ -1301,7 +1467,16 @@ class CommandsController:
                     return
                 
                 # Set the new log channel
-                success = await self.bot.leaderboard_manager.set_warning_log_channel(ctx.guild.id, channel.id)
+                leaderboard_manager = self.get_leaderboard_manager()
+                if not leaderboard_manager:
+                    error_msg = "Leaderboard manager is not available."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                success = await leaderboard_manager.set_warning_log_channel(ctx.guild.id, channel.id)
                 
                 if success:
                     embed = discord.Embed(
@@ -1350,7 +1525,7 @@ class CommandsController:
 
         @self.bot.hybrid_command(name="testbest", description="Test best image functionality with custom date range (Bot owners only)")
         @commands.is_owner()
-        async def test_best_command(ctx, days_back: int = 7, channel_id: int = None):
+        async def test_best_command(ctx, days_back: int = 7, channel_id: Optional[int] = None):
             """Test best image functionality with custom parameters"""
             try:
                 if hasattr(ctx, 'defer'):
@@ -1383,7 +1558,16 @@ class CommandsController:
                     return
                 
                 # Get the best image
-                best_image = await self.bot.leaderboard_manager.get_best_image(
+                leaderboard_manager = self.get_leaderboard_manager()
+                if not leaderboard_manager:
+                    error_msg = "Leaderboard manager is not available."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                best_image = await leaderboard_manager.get_best_image(
                     channel_id=str(test_channel_id),
                     start_date=start_date,
                     end_date=end_date
@@ -1431,7 +1615,7 @@ class CommandsController:
 
         @self.bot.hybrid_command(name="updatescore", description="Update scores for recent images by re-scanning reactions (Bot owners only)")
         @commands.is_owner()
-        async def update_score_command(ctx, days_back: int = 7, channel_id: int = None):
+        async def update_score_command(ctx, days_back: int = 7, channel_id: Optional[int] = None):
             """Update scores for recent images by re-scanning their reactions"""
             try:
                 if hasattr(ctx, 'defer'):
@@ -1472,7 +1656,16 @@ class CommandsController:
                     return
                 
                 # Get all images from the database in this time period
-                images_in_db = list(self.bot.leaderboard_manager.images_collection.find({
+                leaderboard_manager = self.get_leaderboard_manager()
+                if not leaderboard_manager:
+                    error_msg = "Leaderboard manager is not available."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                images_in_db = list(leaderboard_manager.images_collection.find({
                     "channel_id": str(test_channel_id),
                     "created_at": {"$gte": start_date}
                 }))
@@ -1506,7 +1699,7 @@ class CommandsController:
                                         break
                         
                         # Update the database
-                        await self.bot.leaderboard_manager.update_image_message_score(
+                        await leaderboard_manager.update_image_message_score(
                             message_id=str(message.id),
                             thumbs_up=thumbs_up,
                             thumbs_down=thumbs_down
@@ -1521,7 +1714,7 @@ class CommandsController:
                     except discord.NotFound:
                         # Message was deleted
                         logger.info(f"Message {image_data['message_id']} was deleted, removing from database")
-                        await self.bot.leaderboard_manager.delete_image_message(image_data['message_id'])
+                        await leaderboard_manager.delete_image_message(image_data['message_id'])
                         errors += 1
                     except Exception as e:
                         logger.error(f"Error updating message {image_data['message_id']}: {e}")
@@ -1985,3 +2178,97 @@ class CommandsController:
         self.youtube_help = youtube_help
         self.youtube_validate = youtube_validate
         self.debug_reactions_command = debug_reactions_command
+
+        # TEMPORARY RESEARCH COMMANDS FOR RANDOM ANNOUNCEMENTS
+        @self.bot.hybrid_command(name='start_announcements', description='Start random announcements (RESEARCH)')
+        @commands.has_permissions(administrator=True)
+        async def start_announcements_cmd(ctx):
+            """Start the random announcement system"""
+            random_announcer = self.get_random_announcer()
+            if not random_announcer:
+                await ctx.send("❌ Random announcer is not initialized!")
+                return
+            
+            if random_announcer.random_announcement_task.is_running():
+                await ctx.send("⚠️ Random announcements are already running!")
+                return
+            
+            random_announcer.start_announcements()
+            await ctx.send("✅ Started random announcement system! Announcements will be posted every 15 minutes.")
+
+        @self.bot.hybrid_command(name='stop_announcements', description='Stop random announcements (RESEARCH)')
+        @commands.has_permissions(administrator=True)
+        async def stop_announcements_cmd(ctx):
+            """Stop the random announcement system"""
+            random_announcer = self.get_random_announcer()
+            if not random_announcer:
+                await ctx.send("❌ Random announcer is not initialized!")
+                return
+            
+            if not random_announcer.random_announcement_task.is_running():
+                await ctx.send("⚠️ Random announcements are not running!")
+                return
+            
+            random_announcer.stop_announcements()
+            await ctx.send("🛑 Stopped random announcement system!")
+
+        @self.bot.hybrid_command(name='test_announcement', description='Test a specific personality announcement (RESEARCH)')
+        @commands.has_permissions(administrator=True)
+        async def test_announcement_cmd(ctx, personality: str = 'tame'):
+            """Test an announcement with a specific personality"""
+            random_announcer = self.get_random_announcer()
+            if not random_announcer:
+                await ctx.send("❌ Random announcer is not initialized!")
+                return
+            
+            valid_personalities = list(random_announcer.personality_variations.keys())
+            if personality not in valid_personalities:
+                await ctx.send(f"❌ Invalid personality! Valid options: {', '.join(valid_personalities)}")
+                return
+            
+            await ctx.send(f"🧪 Testing {personality} personality...")
+            
+            # Generate and post test announcement
+            announcement = await random_announcer.generate_random_announcement(personality)
+            if announcement:
+                await random_announcer.post_announcement(announcement, personality)
+                await ctx.send(f"✅ Posted test announcement with {personality} personality!")
+            else:
+                await ctx.send("❌ Failed to generate test announcement!")
+
+        @self.bot.hybrid_command(name='announcement_stats', description='Get feedback statistics (RESEARCH)')
+        @commands.has_permissions(administrator=True)
+        async def announcement_stats_cmd(ctx, days: int = 7):
+            """Get feedback statistics for random announcements"""
+            random_announcer = self.get_random_announcer()
+            if not random_announcer:
+                await ctx.send("❌ Random announcer is not initialized!")
+                return
+            
+            stats = await random_announcer.get_feedback_stats(days)
+            
+            if not stats:
+                await ctx.send(f"📊 No feedback data found for the last {days} days.")
+                return
+            
+            embed = discord.Embed(
+                title=f"📊 Announcement Feedback Stats ({days} days)",
+                color=discord.Color.blue(),
+                timestamp=discord.utils.utcnow()
+            )
+            
+            for personality, data in stats.items():
+                likes = data.get('likes', 0)
+                dislikes = data.get('dislikes', 0)
+                total = likes + dislikes
+                
+                if total > 0:
+                    percentage = (likes / total) * 100
+                    embed.add_field(
+                        name=f"🎭 {personality.title()}",
+                        value=f"👍 {likes} | 👎 {dislikes}\n📈 {percentage:.1f}% positive",
+                        inline=True
+                    )
+            
+            embed.set_footer(text="Research data for personality optimization")
+            await ctx.send(embed=embed)

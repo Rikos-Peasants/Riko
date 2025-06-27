@@ -3,11 +3,28 @@ from discord.ext import commands, tasks
 import asyncio
 import logging
 from datetime import datetime, timedelta
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, Union, Any
 from config import Config
 from views.embeds import EmbedViews
 
 logger = logging.getLogger(__name__)
+
+class ImageMessage:
+    """Wrapper class for image messages to work with embed views"""
+    def __init__(self, data: dict):
+        self.id = int(data['message_id'])
+        self.channel: Optional[discord.abc.GuildChannel] = None
+        self.author: Optional[Union[discord.User, 'DummyUser']] = None
+        self.created_at = data['created_at']
+        self.jump_url = data['jump_url']
+        self.attachments = []
+        self.embeds = []
+
+class DummyUser:
+    """Dummy user class for when user is not found"""
+    def __init__(self, name: str):
+        self.display_name = name
+        self.display_avatar = None
 
 class SchedulerController:
     """Controller for handling scheduled tasks like best image posts"""
@@ -126,6 +143,12 @@ class SchedulerController:
             
             logger.info(f"Finding best {period} image from {start_date.strftime('%Y-%m-%d %H:%M')} to {end_date.strftime('%Y-%m-%d %H:%M')}")
             
+            # Get leaderboard manager
+            leaderboard_manager = getattr(self.bot, 'leaderboard_manager', None)
+            if not leaderboard_manager:
+                logger.error("Leaderboard manager not available")
+                return
+            
             # Find the best image from each channel separately
             for channel_id in Config.IMAGE_REACTION_CHANNELS:
                 channel = guild.get_channel(channel_id)
@@ -133,14 +156,23 @@ class SchedulerController:
                     logger.warning(f"Could not find channel {channel_id}")
                     continue
                 
+                # Check if channel is a messageable channel
+                if not isinstance(channel, (discord.TextChannel, discord.Thread, discord.VoiceChannel, discord.StageChannel)):
+                    logger.warning(f"Channel {channel_id} is not a messageable channel")
+                    continue
+                
                 logger.info(f"Finding best image in #{channel.name} (ID: {channel_id}) for {period}")
                 
                 # Get the best image from MongoDB
-                best_image = await self.bot.leaderboard_manager.get_best_image(
-                    channel_id=str(channel_id),
-                    start_date=start_date,
-                    end_date=end_date
-                )
+                if hasattr(leaderboard_manager, 'get_best_image'):
+                    best_image = await leaderboard_manager.get_best_image(
+                        channel_id=str(channel_id),
+                        start_date=start_date,
+                        end_date=end_date
+                    )
+                else:
+                    logger.error("get_best_image method not available on leaderboard manager")
+                    continue
                 
                 if not best_image:
                     logger.info(f"No images found for {period}ly best image in #{channel.name}")
@@ -161,35 +193,31 @@ class SchedulerController:
                 
                 logger.info(f"Found winning image in #{channel.name}: {best_image['author_name']} with score {best_image['score']}")
                 
-                # Create custom message object for the embed
-                class ImageMessage:
-                    def __init__(self, data):
-                        self.id = int(data['message_id'])
-                        self.channel = channel
-                        self.author = None  # Will be set below
-                        self.created_at = data['created_at']
-                        self.jump_url = data['jump_url']
-                        self.attachments = []
-                        self.embeds = []
-                
                 # Create message object
                 message = ImageMessage(best_image)
+                message.channel = channel
                 
                 # Get the author
                 try:
-                    message.author = await self.bot.fetch_user(int(best_image['author_id']))
-                    logger.info(f"Found author: {message.author.display_name}")
+                    user = await self.bot.fetch_user(int(best_image['author_id']))
+                    message.author = user
+                    logger.info(f"Found author: {user.display_name}")
                 except Exception as e:
                     logger.warning(f"Could not fetch user {best_image['author_id']}: {e}")
                     # If user not found, create a dummy user
-                    class DummyUser:
-                        def __init__(self, name):
-                            self.display_name = name
-                            self.display_avatar = None
                     message.author = DummyUser(best_image['author_name'])
                 
-                # Create and post the winning image embed
-                embed = await EmbedViews.best_image_embed(message, period, best_image['score'])
+                # Create and post the winning image embed using custom embed creation
+                # Since we don't have the actual Discord message, create a custom embed
+                embed = discord.Embed(
+                    title=f"{'🥇' if period == 'week' else '👑' if period == 'month' else '🏆'} Best Image of the {period.title()}!",
+                    description=f"Congratulations to **{best_image['author_name']}** for the most upvoted image!\n\n"
+                               f"**Net Score:** {best_image['score']} upvotes (👍 - 👎)\n"
+                               f"**Channel:** #{channel.name}\n"
+                               f"**Posted:** {best_image['created_at'].strftime('%B %d, %Y')}",
+                    color=discord.Color.gold() if period == 'week' else discord.Color.purple() if period == 'month' else discord.Color.red(),
+                    timestamp=datetime.utcnow()
+                )
                 
                 # Add the image URL from our database
                 embed.set_image(url=best_image['image_url'])
@@ -223,10 +251,11 @@ class SchedulerController:
                 await channel.send(embed=embed)
                 
                 # Award achievement if quest manager is available
-                if hasattr(self.bot, 'events_controller') and self.bot.events_controller.quest_manager:
+                events_controller = getattr(self.bot, 'events_controller', None)
+                if events_controller and hasattr(events_controller, 'quest_manager') and events_controller.quest_manager:
                     try:
                         author_id = int(best_image['author_id'])
-                        achievement = await self.bot.events_controller.quest_manager.award_competition_achievement(
+                        achievement = await events_controller.quest_manager.award_competition_achievement(
                             user_id=author_id,
                             user_name=best_image['author_name'],
                             competition_type=period
@@ -263,10 +292,11 @@ class SchedulerController:
         """Check for expired events and automatically end them"""
         try:
             # Check if quest manager is available
-            if not hasattr(self.bot, 'events_controller') or not self.bot.events_controller.quest_manager:
+            events_controller = getattr(self.bot, 'events_controller', None)
+            if not events_controller or not hasattr(events_controller, 'quest_manager') or not events_controller.quest_manager:
                 return
             
-            quest_manager = self.bot.events_controller.quest_manager
+            quest_manager = events_controller.quest_manager
             now = datetime.now()
             
             # Find events that have expired but are still active
@@ -279,26 +309,28 @@ class SchedulerController:
                 logger.info(f"Auto-ending expired event: {event['name']}")
                 
                 # End the event
-                result = await quest_manager.end_event(
-                    event_id=str(event['_id']),
-                    leaderboard_manager=self.bot.leaderboard_manager
-                )
+                leaderboard_manager = getattr(self.bot, 'leaderboard_manager', None)
+                if leaderboard_manager:
+                    result = await quest_manager.end_event(
+                        event_id=str(event['_id']),
+                        leaderboard_manager=leaderboard_manager
+                    )
                 
-                if result:
-                    # Find a channel to announce the winner
-                    guild = self.bot.get_guild(Config.GUILD_ID)
-                    if guild:
-                        # Try to use the first image channel for announcements
-                        for channel_id in Config.IMAGE_REACTION_CHANNELS:
-                            channel = guild.get_channel(channel_id)
-                            if channel:
-                                embed = EmbedViews.event_winner_embed(result['event'], result['winner'])
-                                await channel.send(embed=embed)
-                                break
-                    
-                    logger.info(f"Successfully ended expired event: {event['name']}")
-                else:
-                    logger.error(f"Failed to end expired event: {event['name']}")
+                    if result:
+                        # Find a channel to announce the winner
+                        guild = self.bot.get_guild(Config.GUILD_ID)
+                        if guild:
+                            # Try to use the first image channel for announcements
+                            for channel_id in Config.IMAGE_REACTION_CHANNELS:
+                                channel = guild.get_channel(channel_id)
+                                if channel and isinstance(channel, (discord.TextChannel, discord.Thread, discord.VoiceChannel, discord.StageChannel)):
+                                    embed = EmbedViews.event_winner_embed(result['event'], result['winner'])
+                                    await channel.send(embed=embed)
+                                    break
+                        
+                        logger.info(f"Successfully ended expired event: {event['name']}")
+                    else:
+                        logger.error(f"Failed to end expired event: {event['name']}")
                     
         except Exception as e:
             logger.error(f"Error checking expired events: {e}")
@@ -318,10 +350,11 @@ class SchedulerController:
         """Check and update user streaks daily"""
         try:
             # Check if quest manager is available
-            if not hasattr(self.bot, 'events_controller') or not self.bot.events_controller.quest_manager:
+            events_controller = getattr(self.bot, 'events_controller', None)
+            if not events_controller or not hasattr(events_controller, 'quest_manager') or not events_controller.quest_manager:
                 return
             
-            quest_manager = self.bot.events_controller.quest_manager
+            quest_manager = events_controller.quest_manager
             
             # Check for broken streaks
             await quest_manager.check_and_break_streaks()
@@ -342,11 +375,11 @@ class SchedulerController:
         
         try:
             # Use the bot's YouTube monitor instance
-            if not hasattr(self.bot, 'youtube_monitor') or not self.bot.youtube_monitor:
+            youtube_monitor = getattr(self.bot, 'youtube_monitor', None)
+            if not youtube_monitor:
                 logger.warning("YouTube monitor not available on bot instance")
                 return
             
-            youtube_monitor = self.bot.youtube_monitor
             await youtube_monitor.load_monitored_channels()
             
             # Log how many channels we're monitoring

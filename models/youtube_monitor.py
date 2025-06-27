@@ -3,24 +3,30 @@ import asyncio
 import feedparser
 import requests
 from datetime import datetime, timedelta
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Any, TYPE_CHECKING
 import logging
 from google import genai
 from google.genai import types
 from googleapiclient.discovery import build
 from config import Config
+import discord
+from discord.ext import commands
+import aiohttp
+
+if TYPE_CHECKING:
+    from models.mongo_leaderboard_manager import MongoLeaderboardManager
 
 logger = logging.getLogger(__name__)
 
 class YouTubeMonitor:
     """Monitors YouTube channels for new videos and generates Ino responses"""
     
-    def __init__(self, mongodb_manager=None):
-        self.monitored_channels = {}  # Dictionary to store channel configs
+    def __init__(self, mongodb_manager: Optional['MongoLeaderboardManager'] = None):
+        self.monitored_channels: List[Dict[str, Any]] = []
         self.mongodb_manager = mongodb_manager
         self.gemini_api_key = Config.GEMINI_API_KEY if hasattr(Config, 'GEMINI_API_KEY') and Config.GEMINI_API_KEY else None
         self.guild_id = Config.GUILD_ID
-        self.bot = None  # Will be set when needed
+        self.bot: Optional[commands.Bot] = None
         
         # Initialize YouTube API client
         self.youtube_api_key = Config.YOUTUBE_API_KEY if hasattr(Config, 'YOUTUBE_API_KEY') and Config.YOUTUBE_API_KEY else None
@@ -48,33 +54,43 @@ class YouTubeMonitor:
             logger.warning("No Gemini API key found - Ino responses will use fallback templates")
             self.gemini_client = None
 
+        # Initialize monitored channels from database
+        asyncio.create_task(self.load_monitored_channels())
+
     async def load_monitored_channels(self):
-        """Load monitored YouTube channels from database"""
+        """Load monitored channels from MongoDB"""
         try:
-            # Get all YouTube monitoring settings from the database
-            # Look for all settings that start with "youtube_monitor_"
-            if hasattr(self.mongodb_manager, 'settings_collection'):
-                cursor = self.mongodb_manager.settings_collection.find({
-                    "setting_name": {"$regex": "^youtube_monitor_UC"}
-                })
-                
-                self.monitored_channels = {}
-                count = 0
-                
-                for setting_doc in cursor:
-                    setting_value = setting_doc.get('setting_value', {})
-                    if isinstance(setting_value, dict):
-                        youtube_channel_id = setting_value.get('youtube_channel_id')
-                        if youtube_channel_id:
-                            self.monitored_channels[youtube_channel_id] = setting_value
-                            count += 1
-                
-                logger.info(f"Loaded {count} monitored YouTube channels from database")
-            else:
-                logger.error("MongoDB settings collection not available")
+            self.monitored_channels = []
             
+            # Look for all settings that start with "youtube_monitor_"
+            if self.mongodb_manager and hasattr(self.mongodb_manager, 'settings_collection'):
+                try:
+                    # Check if settings_collection exists before using it
+                    if self.mongodb_manager.settings_collection is not None:
+                        cursor = self.mongodb_manager.settings_collection.find({
+                            "setting_name": {"$regex": "^youtube_monitor_UC"}
+                        })
+                        
+                        for setting in cursor:  # Use synchronous iteration
+                            setting_value = setting.get('setting_value')
+                            if setting_value and setting_value.get('enabled', True):
+                                self.monitored_channels.append({
+                                    'youtube_channel_id': setting_value['youtube_channel_id'],
+                                    'discord_channel_id': setting_value['discord_channel_id'],
+                                    'guild_id': setting_value['guild_id'],
+                                    'enabled': True
+                                })
+                except Exception as e:
+                    logger.warning(f"Error loading monitored channels from database: {e}")
+                    
+            if not self.monitored_channels:
+                # Fallback to default config if no channels found
+                logger.info("No monitored channels found in database")
+                
+            logger.info(f"Loaded {len(self.monitored_channels)} monitored YouTube channels from database")
         except Exception as e:
             logger.error(f"Error loading monitored channels: {e}")
+            self.monitored_channels = []
 
     async def add_monitored_channel(self, youtube_channel_id: str, discord_channel_id: int, guild_id: int) -> bool:
         """Add a YouTube channel to monitor"""
@@ -97,13 +113,14 @@ class YouTubeMonitor:
             }
             
             # Save to database as a setting
-            await self.mongodb_manager.set_guild_setting(
-                guild_id=guild_id,
-                setting_name=f"youtube_monitor_{youtube_channel_id}",
-                setting_value=setting
-            )
+            if self.mongodb_manager:
+                await self.mongodb_manager.set_guild_setting(
+                    guild_id=guild_id,
+                    setting_name=f"youtube_monitor_{youtube_channel_id}",
+                    setting_value=setting
+                )
             
-            self.monitored_channels[youtube_channel_id] = setting
+            self.monitored_channels.append(setting)
             logger.info(f"Added YouTube channel monitoring: {channel_info.get('title')} -> Discord channel {discord_channel_id}")
             return True
             
@@ -114,20 +131,25 @@ class YouTubeMonitor:
     async def remove_monitored_channel(self, youtube_channel_id: str) -> bool:
         """Remove a YouTube channel from monitoring"""
         try:
-            if youtube_channel_id not in self.monitored_channels:
+            # Find the channel in our list
+            channel_to_remove = None
+            for channel in self.monitored_channels:
+                if channel['youtube_channel_id'] == youtube_channel_id:
+                    channel_to_remove = channel
+                    break
+            
+            if not channel_to_remove:
                 return False
             
-            setting = self.monitored_channels[youtube_channel_id]
-            guild_id = setting.get('guild_id')
-            
             # Remove from database
-            await self.mongodb_manager.set_guild_setting(
-                guild_id=guild_id,
-                setting_name=f"youtube_monitor_{youtube_channel_id}",
-                setting_value=None  # Setting to None removes it
-            )
+            if self.mongodb_manager:
+                await self.mongodb_manager.set_guild_setting(
+                    guild_id=channel_to_remove['guild_id'],
+                    setting_name=f"youtube_monitor_{youtube_channel_id}",
+                    setting_value=None  # Setting to None removes it
+                )
             
-            del self.monitored_channels[youtube_channel_id]
+            self.monitored_channels.remove(channel_to_remove)
             logger.info(f"Removed YouTube channel monitoring: {youtube_channel_id}")
             return True
             
@@ -135,7 +157,7 @@ class YouTubeMonitor:
             logger.error(f"Error removing monitored channel: {e}")
             return False
 
-    async def get_channel_info(self, youtube_channel_id: str) -> Optional[Dict]:
+    async def get_channel_info(self, youtube_channel_id: str) -> Optional[Dict[str, Any]]:
         """Get basic info about a YouTube channel using YouTube API"""
         try:
             if not self.youtube_client:
@@ -172,51 +194,58 @@ class YouTubeMonitor:
             # Fallback to RSS
             return await self._get_channel_info_rss(youtube_channel_id)
 
-    async def _get_channel_info_rss(self, youtube_channel_id: str) -> Optional[Dict]:
+    async def _get_channel_info_rss(self, youtube_channel_id: str) -> Optional[Dict[str, Any]]:
         """Fallback method to get channel info using RSS feed"""
         try:
             rss_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={youtube_channel_id}"
             
-            response = requests.get(rss_url, timeout=10)
-            response.raise_for_status()
+            async with aiohttp.ClientSession() as session:
+                async with session.get(rss_url) as response:
+                    if response.status != 200:
+                        return None
             
             feed = feedparser.parse(response.content)
             
-            if feed.entries or feed.feed.get('title'):
-                channel_info = {
-                    'title': feed.feed.get('title', 'Unknown Channel'),
-                    'link': feed.feed.get('link', ''),
-                    'description': feed.feed.get('description', ''),
-                    'latest_video': feed.entries[0] if feed.entries else None
-                }
-                logger.info(f"Channel info retrieved via RSS: {channel_info['title']}")
-                return channel_info
-            else:
-                logger.warning(f"No entries or title found in RSS feed for channel {youtube_channel_id}")
-                return None
+            # Check if feed is valid and has content
+            if hasattr(feed, 'feed') and hasattr(feed.feed, 'title'):
+                if feed.entries or getattr(feed.feed, 'title', None):
+                    channel_info = {
+                        'title': getattr(feed.feed, 'title', 'Unknown Channel'),
+                        'link': getattr(feed.feed, 'link', ''),
+                        'description': getattr(feed.feed, 'description', ''),
+                        'latest_video': feed.entries[0] if feed.entries else None
+                    }
+                    logger.info(f"Channel info retrieved via RSS: {channel_info['title']}")
+                    return channel_info
+            
+            return None
             
         except Exception as e:
             logger.error(f"Error getting channel info via RSS for {youtube_channel_id}: {e}")
             return None
 
-    async def check_for_new_videos(self) -> List[Dict]:
+    async def check_for_new_videos(self) -> List[Dict[str, Any]]:
         """Check all monitored channels for new videos using YouTube API"""
         new_videos = []
         
         logger.info(f"Starting to check {len(self.monitored_channels)} channels for new videos")
         
-        for channel_id, config in self.monitored_channels.items():
+        for channel in self.monitored_channels:
+            if not channel.get('enabled', True):
+                continue
+                
             try:
-                logger.info(f"🔍 Checking channel {channel_id} for new videos")
+                youtube_channel_id = channel['youtube_channel_id']
+                logger.debug(f"Checking for new videos from channel: {youtube_channel_id}")
                 
                 # Get recent videos using YouTube API (much faster than RSS)
-                recent_videos = await self._get_recent_videos_api(channel_id)
+                recent_videos = await self._get_recent_videos_api(youtube_channel_id)
                 
                 if not recent_videos:
-                    logger.info(f"❌ No videos found for channel {channel_id}")
+                    logger.info(f"❌ No videos found for channel {youtube_channel_id}")
                     continue
                 
-                logger.info(f"Found {len(recent_videos)} recent videos for channel {channel_id}")
+                logger.info(f"Found {len(recent_videos)} recent videos for channel {youtube_channel_id}")
                 
                 # Process videos (already sorted by publish date)
                 videos_to_process = []
@@ -271,7 +300,7 @@ class YouTubeMonitor:
                         'description': video_data['description'],
                         'author': video_data['author'],
                         'duration': video_data.get('duration_seconds', 0),
-                        'config': {**config, 'channel_id': channel_id}  # Include channel_id in config
+                        'config': {**channel, 'channel_id': youtube_channel_id}  # Include channel_id in config
                     })
                 
                 # Add new videos to the list (don't mark as processed yet - that happens after successful announcement)
@@ -279,18 +308,18 @@ class YouTubeMonitor:
                     new_videos.append(video)
                 
                 if videos_to_process:
-                    logger.info(f"✅ Found {len(videos_to_process)} new videos for channel {channel_id}")
+                    logger.info(f"✅ Found {len(videos_to_process)} new videos for channel {youtube_channel_id}")
                 else:
-                    logger.info(f"❌ No new videos found for channel {channel_id}")
+                    logger.info(f"❌ No new videos found for channel {youtube_channel_id}")
                 
             except Exception as e:
-                logger.error(f"❌ Error checking channel {channel_id}: {e}")
+                logger.error(f"❌ Error checking channel {youtube_channel_id}: {e}")
                 import traceback
                 logger.error(traceback.format_exc())
         
         return new_videos
 
-    async def _get_recent_videos_api(self, channel_id: str) -> List[Dict]:
+    async def _get_recent_videos_api(self, channel_id: str) -> List[Dict[str, Any]]:
         """Get recent videos from a channel using YouTube API"""
         try:
             if not self.youtube_client:
@@ -391,29 +420,49 @@ class YouTubeMonitor:
         except:
             return 0
 
-    async def _get_recent_videos_rss(self, channel_id: str) -> List[Dict]:
+    async def _get_recent_videos_rss(self, channel_id: str) -> List[Dict[str, Any]]:
         """Fallback method to get recent videos using RSS feed"""
         try:
             rss_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
-            response = requests.get(rss_url, timeout=10)
-            response.raise_for_status()
             
-            feed = feedparser.parse(response.content)
+            async with aiohttp.ClientSession() as session:
+                async with session.get(rss_url) as response:
+                    if response.status != 200:
+                        return []
+                    
+                    content = await response.read()
             
+            feed = feedparser.parse(content)
             videos = []
             for entry in feed.entries:
-                video_id = entry.id.split(':')[-1]
-                published_datetime = datetime.strptime(entry.published, '%Y-%m-%dT%H:%M:%S+00:00')
+                # Extract video ID from the entry ID
+                video_id = getattr(entry, 'id', '').split(':')[-1] if hasattr(entry, 'id') else ''
+                if not video_id:
+                    continue
+                    
+                # Parse published date
+                published_str = getattr(entry, 'published', '')
+                if published_str:
+                    try:
+                        published_datetime = datetime.strptime(published_str, '%Y-%m-%dT%H:%M:%S+00:00')
+                    except ValueError:
+                        # Try alternative format
+                        try:
+                            published_datetime = datetime.strptime(published_str, '%Y-%m-%dT%H:%M:%SZ')
+                        except ValueError:
+                            published_datetime = datetime.now()
+                else:
+                    published_datetime = datetime.now()
                 
                 videos.append({
                     'id': video_id,
-                    'title': entry.title,
-                    'description': getattr(entry, 'summary', ''),
-                    'published': entry.published,
+                    'title': getattr(entry, 'title', 'Unknown Title'),
+                    'link': getattr(entry, 'link', ''),
+                    'published': published_str,
                     'published_datetime': published_datetime,
-                    'link': entry.link,
-                    'author': getattr(entry, 'author', 'Unknown'),
-                    'duration_seconds': 0  # Can't get duration from RSS
+                    'author': getattr(entry, 'author', 'Unknown Author'),
+                    'description': getattr(entry, 'summary', ''),
+                    'channel_id': channel_id
                 })
             
             logger.info(f"Retrieved {len(videos)} videos via RSS for channel {channel_id}")
@@ -423,36 +472,30 @@ class YouTubeMonitor:
             logger.error(f"Error getting videos via RSS for channel {channel_id}: {e}")
             return []
 
-    async def get_recent_videos(self, youtube_channel_id: str) -> List[Dict]:
+    async def get_recent_videos(self, youtube_channel_id: str) -> List[Dict[str, Any]]:
         """Get recent videos from a YouTube channel"""
         try:
-            rss_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={youtube_channel_id}"
+            # Try RSS first (no API key needed)
+            videos = await self._get_recent_videos_rss(youtube_channel_id)
+            if videos:
+                logger.debug(f"Got {len(videos)} videos via RSS for channel {youtube_channel_id}")
+                return videos
             
-            response = requests.get(rss_url, timeout=10)
-            response.raise_for_status()
+            # Fallback to API if RSS fails and we have an API key
+            if self.youtube_api_key:
+                videos = await self._get_recent_videos_api(youtube_channel_id)
+                if videos:
+                    logger.debug(f"Got {len(videos)} videos via API for channel {youtube_channel_id}")
+                    return videos
             
-            feed = feedparser.parse(response.content)
-            
-            videos = []
-            for entry in feed.entries[:5]:  # Last 5 videos
-                video = {
-                    'id': entry.get('yt_videoid', ''),
-                    'title': entry.get('title', ''),
-                    'link': entry.get('link', ''),
-                    'published': entry.get('published', ''),
-                    'published_parsed': entry.get('published_parsed'),
-                    'description': entry.get('description', ''),
-                    'author': entry.get('author', '')
-                }
-                videos.append(video)
-            
-            return videos
+            logger.warning(f"Could not get videos for channel {youtube_channel_id}")
+            return []
             
         except Exception as e:
             logger.error(f"Error getting recent videos for {youtube_channel_id}: {e}")
             return []
 
-    async def generate_ino_response(self, video: Dict) -> Optional[str]:
+    async def generate_ino_response(self, video: Dict[str, Any]) -> Optional[str]:
         """Generate Ino's response to a new video using Gemini AI with video attachment"""
         try:
             if not self.gemini_client:
@@ -622,12 +665,12 @@ Remember to include the role ping <@&1375737416325009552> at the end."""
 - **Protective Loyalty:** You look out for Riko when needed and worry when she's up to mischief.
 - **Video Announcements:** When a new video's ready, you MUST ping <@&1375737416325009552> at the end of the message with a brief, warm-but-teasing line directed at the server members ("Riko simps") and a light roast of the video itself."""
 
-    async def get_monitored_channels_list(self) -> List[Dict]:
+    async def get_monitored_channels_list(self) -> List[Dict[str, Any]]:
         """Get list of all monitored channels"""
         await self.load_monitored_channels()
-        return list(self.monitored_channels.values())
+        return self.monitored_channels
 
-    async def announce_video(self, video: Dict):
+    async def announce_video(self, video: Dict[str, Any]):
         """Announce a video to Discord"""
         try:
             config = video.get('config', {})
@@ -652,6 +695,12 @@ Remember to include the role ping <@&1375737416325009552> at the end."""
                 logger.error(f"Could not find Discord channel {discord_channel_id} in guild {guild_id}")
                 return
             
+            # Check if channel is messageable (not ForumChannel or CategoryChannel)
+            from discord import TextChannel, VoiceChannel, DMChannel, GroupChannel, Thread
+            if not isinstance(channel, (TextChannel, VoiceChannel, DMChannel, GroupChannel, Thread)):
+                logger.error(f"Channel {discord_channel_id} is not messageable (type: {type(channel).__name__})")
+                return
+            
             # Generate Ino's response
             ino_response = await self.generate_ino_response(video)
             
@@ -671,6 +720,7 @@ Remember to include the role ping <@&1375737416325009552> at the end."""
                 fallback_response = self._get_fallback_response(video_title, is_rayen_channel, video_author)
                 fallback_msg = f"{fallback_response}\n{video.get('link', '')}"
                 
+                # Channel send capability already checked above
                 await channel.send(fallback_msg)
                 logger.warning(f"⚠️ Used emergency fallback for: {video.get('title', 'Unknown')}")
                 
@@ -687,9 +737,12 @@ Remember to include the role ping <@&1375737416325009552> at the end."""
                 return False
             
             # Check if video exists in processed videos collection (synchronous MongoDB)
-            result = self.mongodb_manager.db.processed_videos.find_one({
-                'video_id': video_id
-            })
+            if hasattr(self.mongodb_manager, 'db') and self.mongodb_manager.db is not None:
+                result = self.mongodb_manager.db.processed_videos.find_one({
+                    'video_id': video_id
+                })
+            else:
+                result = None
             
             is_processed = result is not None
             logger.debug(f"Video {video_id} processed status: {is_processed}")
@@ -708,18 +761,21 @@ Remember to include the role ping <@&1375737416325009552> at the end."""
                 return
             
             # Insert or update the processed video record (keep permanently) - synchronous MongoDB
-            result = self.mongodb_manager.db.processed_videos.update_one(
-                {'video_id': video_id},
-                {
-                    '$set': {
-                        'video_id': video_id,
-                        'processed_at': datetime.utcnow()
-                    }
-                },
-                upsert=True
-            )
-            
-            logger.info(f"Marked video {video_id} as processed (upserted: {result.upserted_id is not None})")
+            if hasattr(self.mongodb_manager, 'db') and self.mongodb_manager.db is not None:
+                result = self.mongodb_manager.db.processed_videos.update_one(
+                    {'video_id': video_id},
+                    {
+                        '$set': {
+                            'video_id': video_id,
+                            'processed_at': datetime.utcnow()
+                        }
+                    },
+                    upsert=True
+                )
+                logger.info(f"Marked video {video_id} as processed (upserted: {result.upserted_id is not None})")
+            else:
+                logger.info(f"Video {video_id} marking skipped (no database available)")
             
         except Exception as e:
             logger.error(f"Error marking video {video_id} as processed: {e}")
+ 
