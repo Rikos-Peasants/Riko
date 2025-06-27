@@ -2181,7 +2181,7 @@ class CommandsController:
 
         # TEMPORARY RESEARCH COMMANDS FOR RANDOM ANNOUNCEMENTS
         @self.bot.hybrid_command(name='start_announcements', description='Start random announcements (RESEARCH)')
-        @commands.has_permissions(administrator=True)
+        @commands.is_owner()
         async def start_announcements_cmd(ctx):
             """Start the random announcement system"""
             random_announcer = self.get_random_announcer()
@@ -2197,7 +2197,7 @@ class CommandsController:
             await ctx.send("✅ Started random announcement system! Announcements will be posted every 15 minutes.")
 
         @self.bot.hybrid_command(name='stop_announcements', description='Stop random announcements (RESEARCH)')
-        @commands.has_permissions(administrator=True)
+        @commands.is_owner()
         async def stop_announcements_cmd(ctx):
             """Stop the random announcement system"""
             random_announcer = self.get_random_announcer()
@@ -2213,7 +2213,7 @@ class CommandsController:
             await ctx.send("🛑 Stopped random announcement system!")
 
         @self.bot.hybrid_command(name='test_announcement', description='Test a specific personality announcement (RESEARCH)')
-        @commands.has_permissions(administrator=True)
+        @commands.is_owner()
         async def test_announcement_cmd(ctx, personality: str = 'tame'):
             """Test an announcement with a specific personality"""
             random_announcer = self.get_random_announcer()
@@ -2237,7 +2237,7 @@ class CommandsController:
                 await ctx.send("❌ Failed to generate test announcement!")
 
         @self.bot.hybrid_command(name='announcement_stats', description='Get feedback statistics (RESEARCH)')
-        @commands.has_permissions(administrator=True)
+        @commands.is_owner()
         async def announcement_stats_cmd(ctx, days: int = 7):
             """Get feedback statistics for random announcements"""
             random_announcer = self.get_random_announcer()
