@@ -2214,7 +2214,7 @@ class CommandsController:
 
         @self.bot.hybrid_command(name='test_announcement', description='Test a specific personality announcement (RESEARCH)')
         @commands.is_owner()
-        async def test_announcement_cmd(ctx, personality: str = 'tame'):
+        async def test_announcement_cmd(ctx, personality: str = 'standard'):
             """Test an announcement with a specific personality"""
             random_announcer = self.get_random_announcer()
             if not random_announcer:
@@ -2228,10 +2228,16 @@ class CommandsController:
             
             await ctx.send(f"🧪 Testing {personality} personality...")
             
+            # Get a random test video and generate announcement
+            video = await random_announcer.get_random_test_video()
+            if not video:
+                await ctx.send("❌ Failed to get test video!")
+                return
+            
             # Generate and post test announcement
-            announcement = await random_announcer.generate_random_announcement(personality)
+            announcement = await random_announcer.generate_ino_announcement(video, personality)
             if announcement:
-                await random_announcer.post_announcement(announcement, personality)
+                await random_announcer.post_announcement(announcement, personality, video)
                 await ctx.send(f"✅ Posted test announcement with {personality} personality!")
             else:
                 await ctx.send("❌ Failed to generate test announcement!")

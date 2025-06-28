@@ -153,6 +153,9 @@ class RikoBot(commands.Bot):
             self.random_announcer.start_announcements()
             logger.info("Started random announcement system - TEMPORARY FOR RESEARCH")
             logger.info("Random announcements will be posted every 15 minutes with feedback buttons")
+            
+            # Post initial startup announcement
+            asyncio.create_task(self.random_announcer.post_startup_announcement())
         
         # Start status cycling
         self.cycle_status.start()
