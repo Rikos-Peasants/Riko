@@ -279,7 +279,7 @@ class RandomAnnouncer:
             return []
     
     async def generate_ino_announcement(self, video: Dict[str, Any], personality: str) -> Optional[str]:
-        """Generate Ino's announcement using Gemini AI with personality variation"""
+        """Generate Ino's announcement using Gemini AI with full system prompt and video context"""
         logger.info(f"🤖 Generating AI announcement for {personality} personality...")
         
         try:
@@ -287,13 +287,9 @@ class RandomAnnouncer:
                 logger.warning("❌ No Gemini client available, using fallback")
                 return self._get_fallback_announcement(video, personality)
             
-            # Use condensed system prompt for better AI performance
-            system_prompt = self._get_condensed_system_prompt()
-            logger.info(f"📜 Using condensed system prompt: {len(system_prompt)} characters")
-            
-            # Get personality modifier
-            personality_modifier = self.personality_variations.get(personality, {}).get('modifier', '')
-            logger.info(f"🎭 Personality modifier: {personality_modifier[:50]}...")
+            # Load FULL system prompt from system-prompt.txt
+            system_prompt = self.load_system_prompt()
+            logger.info(f"📜 Using FULL system prompt: {len(system_prompt)} characters")
             
             # Get video details
             video_title = video.get('title', 'Unknown')
@@ -304,49 +300,75 @@ class RandomAnnouncer:
             
             logger.info(f"📺 Video: {video_title[:50]}... by {video_author}")
             
-            # Determine channel context
-            channel_context = self._get_channel_context(channel_id, video_author)
+            # Get personality modifier for context
+            personality_info = self.personality_variations.get(personality, {})
+            personality_modifier = personality_info.get('modifier', '')
             
-            # Create enhanced prompt with better instructions
-            user_prompt = f"""🎭 PERSONALITY TEST: {personality.upper()}
-{personality_modifier if personality_modifier else 'Use standard Ino personality from system prompt.'}
-
-📺 NEW VIDEO TO ANNOUNCE:
-Title: {video_title}
-Creator: {video_author}
-Description: {video_description[:200]}...
-Channel: {channel_context}
-
-🚨 CRITICAL INSTRUCTIONS:
-- Riko is DIGITAL and CANNOT make physical videos!
-- The creator "{video_author}" is a HUMAN, NOT Riko!
-- Use the ACTUAL creator's name "{video_author}"
-- Keep announcement 10-20 words maximum
-- Apply the personality variation above
-- End with role ping <@&1375737416325009552>
-
-EXAMPLE FORMAT:
-"*sighs* {video_author} uploaded something new: "{video_title[:30]}...". Here we go again, Riko simps. <@&1375737416325009552>"
-
-Generate announcement now:"""
-            
-            logger.info(f"📝 Sending prompt to Gemini AI (personality: {personality})")
-            logger.debug(f"Full prompt being sent:\n{user_prompt}")
-            
-            # Generate content with better configuration
+            # Create conversational context with examples (like your code)
             contents = [
+                # Example conversation showing Ino's style
                 types.Content(
                     role="user",
-                    parts=[types.Part.from_text(text=user_prompt)]
+                    parts=[
+                        types.Part.from_text(text=f"""New video announcement needed:
+Title: "Riko Reacts to Comments"
+Creator: Rayen
+Description: Riko reads and responds to viewer comments with her usual chaos
+Link: https://www.youtube.com/watch?v=-BGXD2Kggx8""")
+                    ]
+                ),
+                types.Content(
+                    role="model", 
+                    parts=[
+                        types.Part.from_text(text="*sighs* Rayen's decided to unleash Riko on the comment section. My condolences, Riko simps. <@&1375737416325009552>")
+                    ]
+                ),
+                # Another example to establish pattern
+                types.Content(
+                    role="user",
+                    parts=[
+                        types.Part.from_text(text=f"""New video announcement needed:
+Title: "Riko Attempts Cooking"
+Creator: Rayen  
+Description: Watch as Riko tries to make a simple meal and chaos ensues
+Link: https://www.youtube.com/watch?v=example""")
+                    ]
+                ),
+                types.Content(
+                    role="model",
+                    parts=[
+                        types.Part.from_text(text="Well, well... Riko's attempting cooking again. Rayen, hide the fire extinguisher. <@&1375737416325009552>")
+                    ]
+                ),
+                # Now the actual request with personality variation
+                types.Content(
+                    role="user",
+                    parts=[
+                        types.Part.from_text(text=f"""New video announcement needed with {personality.upper()} personality variation:
+
+{personality_modifier}
+
+Title: {video_title}
+Creator: {video_author}
+Description: {video_description[:300]}
+Link: {video_link}
+Channel Context: {self._get_channel_context(channel_id, video_author)}
+
+Generate a short Ino announcement (10-20 words) that captures her {personality} personality while announcing this video. Remember to end with <@&1375737416325009552>""")
+                    ]
                 )
             ]
             
+            # Enhanced configuration for better responses
             generate_content_config = types.GenerateContentConfig(
-                max_output_tokens=1000,  # Much higher to handle large system prompt
+                thinking_config=types.ThinkingConfig(thinking_budget=0),  # Like your example
                 response_mime_type="text/plain",
-                temperature=0.7,  # Balanced creativity
+                temperature=0.8,  # More creative for personality variations
+                max_output_tokens=150,  # Shorter responses
                 system_instruction=[types.Part.from_text(text=system_prompt)]
             )
+            
+            logger.info(f"📝 Sending conversational prompt to Gemini AI (personality: {personality})")
             
             # Generate response
             response = self.gemini_client.models.generate_content(
@@ -357,20 +379,20 @@ Generate announcement now:"""
             
             if response and response.text:
                 ai_response = response.text.strip()
-                logger.info(f"✅ AI generated response: {ai_response[:100]}...")
+                logger.info(f"✅ AI generated response: {ai_response}")
                 return ai_response
             else:
-                # Check for specific failure reasons
+                # Enhanced error handling
                 if response and hasattr(response, 'candidates') and response.candidates:
                     candidate = response.candidates[0]
                     if hasattr(candidate, 'finish_reason') and candidate.finish_reason:
                         finish_reason = candidate.finish_reason.name if hasattr(candidate.finish_reason, 'name') else str(candidate.finish_reason)
-                        if finish_reason == 'MAX_TOKENS':
-                            logger.warning("⚠️ AI hit max tokens limit - response truncated")
-                        elif finish_reason == 'SAFETY':
-                            logger.warning("⚠️ AI response blocked by safety filters")
-                        else:
-                            logger.warning(f"⚠️ AI stopped with reason: {finish_reason}")
+                        logger.warning(f"⚠️ AI stopped with reason: {finish_reason}")
+                        
+                        # If it's a content/safety issue, use fallback
+                        if finish_reason in ['SAFETY', 'OTHER']:
+                            logger.info("🔄 Using fallback due to content filters...")
+                            return self._get_fallback_announcement(video, personality)
                 else:
                     logger.warning("❌ AI returned completely empty response")
                 
@@ -405,30 +427,49 @@ Generate announcement now:"""
         video_author = video.get('author', 'Unknown')
         channel_id = video.get('test_channel_id', '')
         
-        # Personality-based prefixes
-        prefixes = {
-            'standard': "*sighs*",
-            'extra_teasing': "Oh my, how... amusing.",
-            'more_caring': "Well, well...",
-            'formal_shrine': "I observe that",
-            'exasperated': "*heavy sigh* Naturally..."
-        }
+        # Enhanced personality-specific responses matching your style
+        if personality == 'standard':
+            if channel_id == "UChhMeymAOC5PNbbnqxD_w4g":  # Rayen
+                return f"*sighs* Rayen's unleashed another creation on us. Brace yourselves, Riko simps. <@&1375737416325009552>"
+            else:
+                return f"*sighs* {video_author} has something new to share. Here we go again, Riko simps. <@&1375737416325009552>"
         
-        prefix = prefixes.get(personality, "*sighs*")
+        elif personality == 'extra_teasing':
+            if channel_id == "UChhMeymAOC5PNbbnqxD_w4g":  # Rayen
+                return f"Well, well... Rayen's feeling creative again. How... ambitious. <@&1375737416325009552>"
+            else:
+                return f"Oh my, {video_author} thinks they're being clever. Adorable. <@&1375737416325009552>"
         
-        if channel_id == "UChhMeymAOC5PNbbnqxD_w4g":  # Rayen
-            return f"{prefix} Rayen uploaded \"{video_title}\". Let's see what he's up to now. <@&1375737416325009552>"
+        elif personality == 'more_caring':
+            if channel_id == "UChhMeymAOC5PNbbnqxD_w4g":  # Rayen
+                return f"Rayen's shared something new for you all. I hope you enjoy it, dear ones. <@&1375737416325009552>"
+            else:
+                return f"{video_author} has prepared something special. Please give it your attention. <@&1375737416325009552>"
+        
+        elif personality == 'formal_shrine':
+            if channel_id == "UChhMeymAOC5PNbbnqxD_w4g":  # Rayen
+                return f"I observe that Rayen has presented a new offering. Do take note. <@&1375737416325009552>"
+            else:
+                return f"The creator {video_author} has made their contribution. Most... noteworthy. <@&1375737416325009552>"
+        
+        elif personality == 'exasperated':
+            if channel_id == "UChhMeymAOC5PNbbnqxD_w4g":  # Rayen
+                return f"*heavy sigh* Naturally, Rayen couldn't leave well enough alone. My condolences, Riko simps. <@&1375737416325009552>"
+            else:
+                return f"*sighs deeply* {video_author} strikes again. What am I even dealing with today? <@&1375737416325009552>"
+        
         else:
-            return f"{prefix} {video_author} created \"{video_title}\". How... interesting. <@&1375737416325009552>"
+            # Default fallback
+            return f"*sighs* {video_author} uploaded \"{video_title}\". Here we go, Riko simps. <@&1375737416325009552>"
     
     def load_system_prompt(self) -> str:
-        """Load the system prompt from file with enhanced validation"""
+        """Load the FULL system prompt from system-prompt.txt"""
         try:
-            logger.info("📜 Loading system prompt from system-prompt.txt...")
+            logger.info("📜 Loading FULL system prompt from system-prompt.txt...")
             with open('system-prompt.txt', 'r', encoding='utf-8') as f:
                 content = f.read().strip()
                 if content and len(content) > 100:  # Ensure it's not just empty or too short
-                    logger.info(f"✅ System prompt loaded successfully ({len(content)} chars)")
+                    logger.info(f"✅ FULL system prompt loaded successfully ({len(content)} chars)")
                     logger.debug(f"System prompt preview: {content[:200]}...")
                     return content
                 else:
