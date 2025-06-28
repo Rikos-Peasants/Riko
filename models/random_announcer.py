@@ -42,12 +42,36 @@ class PersonalityFeedbackView(discord.ui.View):
 
     
     async def _handle_feedback(self, interaction: discord.Interaction, feedback_type: str, emoji: str):
-        """Handle feedback button clicks"""
+        """Handle feedback button clicks and store in database"""
         try:
             await interaction.response.defer(ephemeral=True)
             
-            # Log the feedback (in a real implementation, you'd save this to database)
-            logger.info(f"Feedback received: {feedback_type} for {self.personality} personality from {interaction.user}")
+            # Get the RandomAnnouncer instance to store feedback
+            random_announcer = getattr(interaction.client, 'random_announcer', None)
+            
+            # Store feedback in database
+            if random_announcer:
+                # Get announcement ID from the embed (we'll add this when posting)
+                announcement_id = None
+                if interaction.message and interaction.message.embeds:
+                    embed = interaction.message.embeds[0]
+                    # Look for announcement ID in the footer or add it
+                    if hasattr(embed, 'footer') and embed.footer and embed.footer.text:
+                        footer_parts = embed.footer.text.split('ID:')
+                        if len(footer_parts) > 1:
+                            announcement_id = footer_parts[1].strip().split(' ')[0]
+                
+                if announcement_id:
+                    await random_announcer.store_feedback(
+                        announcement_id, 
+                        interaction.user.id, 
+                        interaction.user.display_name, 
+                        feedback_type, 
+                        self.personality
+                    )
+                    logger.info(f"📊 Stored feedback: {feedback_type} for {self.personality} from {interaction.user}")
+                else:
+                    logger.warning("⚠️ Could not find announcement ID for feedback storage")
             
             # Create feedback embed
             feedback_embed = discord.Embed(
@@ -149,8 +173,39 @@ class RandomAnnouncer:
             logger.warning("❌ No Gemini API key found - Random announcer will use fallback templates")
             self.gemini_client = None
         
+        # Initialize database collections for AI data storage
+        self.ai_announcements_collection = None
+        self.feedback_collection = None
+        self._init_ai_collections()
+        
         # Register persistent views
         self._register_persistent_views()
+    
+    def _init_ai_collections(self):
+        """Initialize MongoDB collections for AI announcements and feedback"""
+        try:
+            # Check if we have a MongoDB leaderboard manager
+            from models.mongo_leaderboard_manager import MongoLeaderboardManager
+            if isinstance(self.leaderboard_manager, MongoLeaderboardManager) and hasattr(self.leaderboard_manager, 'db') and self.leaderboard_manager.db is not None:
+                # Use the existing MongoDB connection
+                self.ai_announcements_collection = self.leaderboard_manager.db['ai_announcements']
+                self.feedback_collection = self.leaderboard_manager.db['ai_feedback']
+                
+                # Create indexes for better performance
+                self.ai_announcements_collection.create_index([("created_at", -1)])
+                self.ai_announcements_collection.create_index([("personality", 1)])
+                self.ai_announcements_collection.create_index([("is_ai_generated", 1)])
+                
+                self.feedback_collection.create_index([("announcement_id", 1)])
+                self.feedback_collection.create_index([("user_id", 1)])
+                self.feedback_collection.create_index([("created_at", -1)])
+                self.feedback_collection.create_index([("feedback_type", 1)])
+                
+                logger.info("✅ AI collections initialized in MongoDB")
+            else:
+                logger.warning("⚠️ No MongoDB connection available - AI data will not be stored")
+        except Exception as e:
+            logger.error(f"❌ Failed to initialize AI collections: {e}")
     
     def _register_persistent_views(self):
         """Register persistent views with the bot for button interactions"""
@@ -162,6 +217,86 @@ class RandomAnnouncer:
             logger.info("✅ Persistent views registered for feedback buttons")
         except Exception as e:
             logger.error(f"❌ Failed to register persistent views: {e}")
+    
+    async def store_ai_announcement(self, announcement: str, personality: str, video: Dict[str, Any], is_ai_generated: bool = True) -> Optional[str]:
+        """Store AI announcement in database for fine-tuning"""
+        try:
+            if self.ai_announcements_collection is None:
+                logger.warning("⚠️ No AI announcements collection available")
+                return None
+            
+            # Create document for the announcement
+            doc = {
+                "announcement_text": announcement,
+                "personality": personality,
+                "is_ai_generated": is_ai_generated,
+                "video_data": {
+                    "title": video.get('title', ''),
+                    "author": video.get('author', ''),
+                    "description": video.get('description', ''),
+                    "link": video.get('link', ''),
+                    "channel_id": video.get('test_channel_id', ''),
+                    "video_id": video.get('video_id', '')
+                },
+                "created_at": datetime.now(),
+                "feedback_count": 0,
+                "positive_feedback": 0,
+                "negative_feedback": 0
+            }
+            
+            # Insert the document
+            result = self.ai_announcements_collection.insert_one(doc)
+            announcement_id = str(result.inserted_id)
+            
+            logger.info(f"📝 Stored AI announcement: {announcement[:50]}... (ID: {announcement_id})")
+            return announcement_id
+            
+        except Exception as e:
+            logger.error(f"❌ Error storing AI announcement: {e}")
+            return None
+    
+    async def store_feedback(self, announcement_id: str, user_id: int, username: str, feedback_type: str, personality: str) -> bool:
+        """Store user feedback for AI announcements"""
+        try:
+            if self.feedback_collection is None or not announcement_id:
+                logger.warning("⚠️ No feedback collection or announcement ID available")
+                return False
+            
+            # Create feedback document
+            feedback_doc = {
+                "announcement_id": announcement_id,
+                "user_id": str(user_id),
+                "username": username,
+                "feedback_type": feedback_type,  # 'good', 'bad', 'love', 'boring'
+                "personality": personality,
+                "created_at": datetime.now()
+            }
+            
+            # Insert feedback
+            self.feedback_collection.insert_one(feedback_doc)
+            
+            # Update announcement feedback counts
+            if self.ai_announcements_collection is not None:
+                # Determine if this is positive or negative feedback
+                is_positive = feedback_type in ['good', 'love']
+                
+                update_query = {"$inc": {"feedback_count": 1}}
+                if is_positive:
+                    update_query["$inc"]["positive_feedback"] = 1
+                else:
+                    update_query["$inc"]["negative_feedback"] = 1
+                
+                self.ai_announcements_collection.update_one(
+                    {"_id": announcement_id},
+                    update_query
+                )
+            
+            logger.info(f"📊 Stored feedback: {feedback_type} from {username} for {personality} personality")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Error storing feedback: {e}")
+            return False
         
     def start_announcements(self):
         """Start the random announcement task"""
@@ -564,6 +699,15 @@ EXAMPLES:
                         text="🔬 Research Data • Help improve Ino's announcements • React below!"
                     )
                     
+                    # Store announcement in database first
+                    announcement_id = await self.store_ai_announcement(announcement, personality, video, True)
+                    
+                    # Update embed footer with announcement ID for feedback tracking
+                    if announcement_id:
+                        embed.set_footer(
+                            text=f"🔬 Research Data • Help improve Ino's announcements • ID: {announcement_id}"
+                        )
+                    
                     # Create the modern UI view with persistent buttons
                     view = PersonalityFeedbackView(personality, video)
                     
@@ -571,7 +715,7 @@ EXAMPLES:
                     message = await channel.send(embed=embed, view=view)
                     
                     posted_count = 1
-                    logger.info(f"Posted {personality} test announcement to #{channel.name}")
+                    logger.info(f"Posted {personality} test announcement to #{channel.name} (DB ID: {announcement_id})")
                     
                 except discord.Forbidden:
                     logger.warning(f"No permission to post in #{channel.name}")
@@ -626,12 +770,155 @@ EXAMPLES:
             logger.error(f"Error posting startup test announcement: {e}")
     
     async def get_feedback_stats(self, days: int = 7) -> Dict[str, Dict[str, int]]:
-        """Get feedback statistics for personality tests"""
-        # For now, return mock data since we'd need database integration for real stats
-        return {
-            'standard': {'likes': random.randint(8, 15), 'dislikes': random.randint(1, 4), 'loves': random.randint(3, 8), 'boring': random.randint(0, 2)},
-            'extra_teasing': {'likes': random.randint(6, 12), 'dislikes': random.randint(2, 6), 'loves': random.randint(5, 10), 'boring': random.randint(1, 3)},
-            'more_caring': {'likes': random.randint(10, 18), 'dislikes': random.randint(1, 3), 'loves': random.randint(8, 15), 'boring': random.randint(2, 5)},
-            'formal_shrine': {'likes': random.randint(5, 10), 'dislikes': random.randint(3, 7), 'loves': random.randint(2, 6), 'boring': random.randint(4, 8)},
-            'exasperated': {'likes': random.randint(7, 14), 'dislikes': random.randint(2, 5), 'loves': random.randint(4, 9), 'boring': random.randint(1, 4)}
-        } 
+        """Get feedback statistics for the last N days from database"""
+        try:
+            if self.feedback_collection is None:
+                logger.warning("⚠️ No feedback collection available")
+                return {}
+            
+            # Calculate date range
+            from datetime import datetime, timedelta
+            start_date = datetime.now() - timedelta(days=days)
+            
+            # Aggregate feedback by personality and type
+            pipeline = [
+                {"$match": {"created_at": {"$gte": start_date}}},
+                {"$group": {
+                    "_id": {
+                        "personality": "$personality",
+                        "feedback_type": "$feedback_type"
+                    },
+                    "count": {"$sum": 1}
+                }}
+            ]
+            
+            results = list(self.feedback_collection.aggregate(pipeline))
+            
+            # Organize results by personality
+            stats = {}
+            for result in results:
+                personality = result["_id"]["personality"]
+                feedback_type = result["_id"]["feedback_type"]
+                count = result["count"]
+                
+                if personality not in stats:
+                    stats[personality] = {"good": 0, "bad": 0, "love": 0, "boring": 0}
+                
+                stats[personality][feedback_type] = count
+            
+            logger.info(f"📊 Retrieved feedback stats for last {days} days: {len(stats)} personalities")
+            return stats
+            
+        except Exception as e:
+            logger.error(f"❌ Error getting feedback stats: {e}")
+            # Return placeholder data as fallback
+            return {
+                "standard": {"good": 0, "bad": 0, "love": 0, "boring": 0},
+                "extra_teasing": {"good": 0, "bad": 0, "love": 0, "boring": 0},
+                "more_caring": {"good": 0, "bad": 0, "love": 0, "boring": 0},
+                "formal_shrine": {"good": 0, "bad": 0, "love": 0, "boring": 0},
+                "exasperated": {"good": 0, "bad": 0, "love": 0, "boring": 0}
+            }
+    
+    async def get_best_announcements(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """Get the best-rated announcements for fine-tuning"""
+        try:
+            if self.ai_announcements_collection is None:
+                logger.warning("⚠️ No AI announcements collection available")
+                return []
+            
+            # Find announcements with positive feedback ratio
+            pipeline = [
+                {"$match": {"feedback_count": {"$gt": 0}}},
+                {"$addFields": {
+                    "positive_ratio": {
+                        "$divide": ["$positive_feedback", "$feedback_count"]
+                    }
+                }},
+                {"$sort": {"positive_ratio": -1, "feedback_count": -1}},
+                {"$limit": limit}
+            ]
+            
+            results = list(self.ai_announcements_collection.aggregate(pipeline))
+            logger.info(f"📈 Retrieved {len(results)} best announcements")
+            return results
+            
+        except Exception as e:
+            logger.error(f"❌ Error getting best announcements: {e}")
+            return []
+    
+    async def get_worst_announcements(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """Get the worst-rated announcements for fine-tuning"""
+        try:
+            if self.ai_announcements_collection is None:
+                logger.warning("⚠️ No AI announcements collection available")
+                return []
+            
+            # Find announcements with negative feedback ratio
+            pipeline = [
+                {"$match": {"feedback_count": {"$gt": 0}}},
+                {"$addFields": {
+                    "negative_ratio": {
+                        "$divide": ["$negative_feedback", "$feedback_count"]
+                    }
+                }},
+                {"$sort": {"negative_ratio": -1, "feedback_count": -1}},
+                {"$limit": limit}
+            ]
+            
+            results = list(self.ai_announcements_collection.aggregate(pipeline))
+            logger.info(f"📉 Retrieved {len(results)} worst announcements")
+            return results
+            
+        except Exception as e:
+            logger.error(f"❌ Error getting worst announcements: {e}")
+            return []
+    
+    async def export_training_data(self, min_feedback: int = 2) -> Dict[str, List[Dict[str, Any]]]:
+        """Export training data for fine-tuning (good vs bad examples)"""
+        try:
+            if self.ai_announcements_collection is None:
+                logger.warning("⚠️ No AI announcements collection available")
+                return {"good_examples": [], "bad_examples": []}
+            
+            # Get announcements with sufficient feedback
+            announcements = list(self.ai_announcements_collection.find({
+                "feedback_count": {"$gte": min_feedback}
+            }))
+            
+            good_examples = []
+            bad_examples = []
+            
+            for announcement in announcements:
+                feedback_count = announcement.get('feedback_count', 0)
+                positive_feedback = announcement.get('positive_feedback', 0)
+                negative_feedback = announcement.get('negative_feedback', 0)
+                
+                if feedback_count > 0:
+                    positive_ratio = positive_feedback / feedback_count
+                    
+                    # Format for training
+                    training_example = {
+                        "announcement": announcement.get('announcement_text', ''),
+                        "personality": announcement.get('personality', ''),
+                        "video_title": announcement.get('video_data', {}).get('title', ''),
+                        "video_author": announcement.get('video_data', {}).get('author', ''),
+                        "feedback_count": feedback_count,
+                        "positive_ratio": positive_ratio
+                    }
+                    
+                    # Classify as good or bad based on ratio
+                    if positive_ratio >= 0.7:  # 70% or more positive
+                        good_examples.append(training_example)
+                    elif positive_ratio <= 0.3:  # 30% or less positive
+                        bad_examples.append(training_example)
+            
+            logger.info(f"📚 Exported training data: {len(good_examples)} good, {len(bad_examples)} bad examples")
+            return {
+                "good_examples": good_examples,
+                "bad_examples": bad_examples
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Error exporting training data: {e}")
+            return {"good_examples": [], "bad_examples": []} 

@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands
 from datetime import datetime, timedelta
 import logging
+import json
 from typing import Optional, Union
 from models.role_manager import RoleManager
 from views.embeds import EmbedViews
@@ -2278,3 +2279,440 @@ class CommandsController:
             
             embed.set_footer(text="Research data for personality optimization")
             await ctx.send(embed=embed)
+
+        @self.bot.hybrid_command(name='export_training_data', description='Export AI training data (RESEARCH)')
+        @commands.is_owner()
+        async def export_training_data_cmd(ctx, min_feedback: int = 2):
+            """Export training data for fine-tuning"""
+            try:
+                if hasattr(ctx, 'defer'):
+                    await ctx.defer()
+                
+                random_announcer = self.get_random_announcer()
+                if not random_announcer:
+                    await ctx.send("❌ Random announcer is not initialized!")
+                    return
+                
+                # Export training data
+                training_data = await random_announcer.export_training_data(min_feedback)
+                
+                good_examples = training_data.get('good_examples', [])
+                bad_examples = training_data.get('bad_examples', [])
+                
+                # Create JSON file content
+                export_data = {
+                    "export_date": datetime.now().isoformat(),
+                    "min_feedback_threshold": min_feedback,
+                    "summary": {
+                        "good_examples": len(good_examples),
+                        "bad_examples": len(bad_examples),
+                        "total_examples": len(good_examples) + len(bad_examples)
+                    },
+                    "good_examples": good_examples,
+                    "bad_examples": bad_examples
+                }
+                
+                # Save to file
+                filename = f"ai_training_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+                with open(filename, 'w', encoding='utf-8') as f:
+                    json.dump(export_data, f, indent=2, ensure_ascii=False)
+                
+                # Send file and summary
+                embed = discord.Embed(
+                    title="📚 AI Training Data Export",
+                    description=f"Exported training data with minimum {min_feedback} feedback per announcement",
+                    color=discord.Color.green(),
+                    timestamp=discord.utils.utcnow()
+                )
+                
+                embed.add_field(
+                    name="✅ Good Examples",
+                    value=f"{len(good_examples)} announcements\n(≥70% positive feedback)",
+                    inline=True
+                )
+                
+                embed.add_field(
+                    name="❌ Bad Examples", 
+                    value=f"{len(bad_examples)} announcements\n(≤30% positive feedback)",
+                    inline=True
+                )
+                
+                embed.add_field(
+                    name="📊 Total Usable Data",
+                    value=f"{len(good_examples) + len(bad_examples)} examples",
+                    inline=True
+                )
+                
+                embed.set_footer(text="Use this data to fine-tune AI models for better announcements")
+                
+                # Send file
+                with open(filename, 'rb') as f:
+                    file = discord.File(f, filename=filename)
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(embed=embed, file=file)
+                    else:
+                        await ctx.send(embed=embed, file=file)
+                
+                # Clean up file
+                import os
+                os.remove(filename)
+                    
+            except Exception as e:
+                await ctx.send(f"❌ Failed to export training data: {str(e)}")
+        
+        @self.bot.hybrid_command(name='best_announcements', description='Show best-rated announcements (RESEARCH)')
+        @commands.is_owner()
+        async def best_announcements_cmd(ctx, limit: int = 5):
+            """Show the best-rated announcements"""
+            try:
+                if hasattr(ctx, 'defer'):
+                    await ctx.defer()
+                
+                random_announcer = self.get_random_announcer()
+                if not random_announcer:
+                    await ctx.send("❌ Random announcer is not initialized!")
+                    return
+                
+                # Get best announcements
+                best_announcements = await random_announcer.get_best_announcements(limit)
+                
+                embed = discord.Embed(
+                    title=f"🏆 Top {limit} Best Announcements",
+                    description="Highest-rated AI-generated announcements for reference",
+                    color=discord.Color.gold(),
+                    timestamp=discord.utils.utcnow()
+                )
+                
+                if not best_announcements:
+                    embed.description = "No rated announcements available yet."
+                else:
+                    for i, announcement in enumerate(best_announcements, 1):
+                        feedback_count = announcement.get('feedback_count', 0)
+                        positive_feedback = announcement.get('positive_feedback', 0)
+                        positive_ratio = announcement.get('positive_ratio', 0)
+                        
+                        embed.add_field(
+                            name=f"#{i} - {announcement.get('personality', 'Unknown').replace('_', ' ').title()}",
+                            value=f"```{announcement.get('announcement_text', 'N/A')[:100]}{'...' if len(announcement.get('announcement_text', '')) > 100 else ''}```\n📊 {positive_feedback}/{feedback_count} positive ({positive_ratio:.1%})",
+                            inline=False
+                        )
+                
+                embed.set_footer(text="🔬 Use these as examples for good announcements")
+                
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(embed=embed)
+                else:
+                    await ctx.send(embed=embed)
+                    
+            except Exception as e:
+                await ctx.send(f"❌ Failed to get best announcements: {str(e)}")
+        
+        @self.bot.hybrid_command(name='download_all_ai_data', description='Download complete AI data export (RESEARCH)')
+        @commands.is_owner()
+        async def download_all_ai_data_cmd(ctx):
+            """Download all AI announcements and feedback data"""
+            try:
+                if hasattr(ctx, 'defer'):
+                    await ctx.defer()
+                
+                random_announcer = self.get_random_announcer()
+                if not random_announcer:
+                    await ctx.send("❌ Random announcer is not initialized!")
+                    return
+                
+                # Check if collections are available
+                if (random_announcer.ai_announcements_collection is None or 
+                    random_announcer.feedback_collection is None):
+                    await ctx.send("❌ AI data collections are not available!")
+                    return
+                
+                # Get all announcements
+                announcements = list(random_announcer.ai_announcements_collection.find({}))
+                
+                # Get all feedback
+                feedback = list(random_announcer.feedback_collection.find({}))
+                
+                # Convert ObjectId to strings for JSON serialization
+                for announcement in announcements:
+                    if '_id' in announcement:
+                        announcement['_id'] = str(announcement['_id'])
+                    if 'created_at' in announcement:
+                        announcement['created_at'] = announcement['created_at'].isoformat()
+                
+                for fb in feedback:
+                    if '_id' in fb:
+                        fb['_id'] = str(fb['_id'])
+                    if 'created_at' in fb:
+                        fb['created_at'] = fb['created_at'].isoformat()
+                
+                # Calculate summary statistics
+                total_announcements = len(announcements)
+                total_feedback = len(feedback)
+                
+                # Personality breakdown
+                personality_stats = {}
+                for announcement in announcements:
+                    personality = announcement.get('personality', 'unknown')
+                    if personality not in personality_stats:
+                        personality_stats[personality] = {
+                            'announcements': 0,
+                            'total_feedback': 0,
+                            'positive_feedback': 0,
+                            'negative_feedback': 0
+                        }
+                    
+                    personality_stats[personality]['announcements'] += 1
+                    personality_stats[personality]['total_feedback'] += announcement.get('feedback_count', 0)
+                    personality_stats[personality]['positive_feedback'] += announcement.get('positive_feedback', 0)
+                    personality_stats[personality]['negative_feedback'] += announcement.get('negative_feedback', 0)
+                
+                # Channel breakdown
+                channel_stats = {}
+                for announcement in announcements:
+                    channel_id = announcement.get('video_data', {}).get('channel_id', 'unknown')
+                    if channel_id not in channel_stats:
+                        channel_stats[channel_id] = 0
+                    channel_stats[channel_id] += 1
+                
+                # User feedback breakdown
+                user_feedback_stats = {}
+                for fb in feedback:
+                    user_id = fb.get('user_id', 'unknown')
+                    if user_id not in user_feedback_stats:
+                        user_feedback_stats[user_id] = {
+                            'username': fb.get('username', 'Unknown'),
+                            'good': 0, 'bad': 0, 'love': 0, 'boring': 0, 'total': 0
+                        }
+                    
+                    feedback_type = fb.get('feedback_type', 'unknown')
+                    if feedback_type in user_feedback_stats[user_id]:
+                        user_feedback_stats[user_id][feedback_type] += 1
+                    user_feedback_stats[user_id]['total'] += 1
+                
+                # Create comprehensive export
+                export_data = {
+                    "export_info": {
+                        "export_date": datetime.now().isoformat(),
+                        "export_type": "complete_ai_data",
+                        "bot_version": "Riko AI Research System"
+                    },
+                    "summary": {
+                        "total_announcements": total_announcements,
+                        "total_feedback": total_feedback,
+                        "unique_users_who_gave_feedback": len(user_feedback_stats),
+                        "personalities_tested": len(personality_stats),
+                        "channels_used": len(channel_stats)
+                    },
+                    "statistics": {
+                        "personality_breakdown": personality_stats,
+                        "channel_usage": channel_stats,
+                        "user_feedback_activity": user_feedback_stats
+                    },
+                    "raw_data": {
+                        "announcements": announcements,
+                        "feedback": feedback
+                    }
+                }
+                
+                # Save to file
+                filename = f"complete_ai_data_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+                with open(filename, 'w', encoding='utf-8') as f:
+                    json.dump(export_data, f, indent=2, ensure_ascii=False)
+                
+                # Create summary embed
+                embed = discord.Embed(
+                    title="📦 Complete AI Data Export",
+                    description="Full database export of all AI announcements and feedback",
+                    color=discord.Color.blue(),
+                    timestamp=discord.utils.utcnow()
+                )
+                
+                embed.add_field(
+                    name="📊 Data Summary",
+                    value=f"**Announcements:** {total_announcements}\n**Feedback:** {total_feedback}\n**Active Users:** {len(user_feedback_stats)}",
+                    inline=True
+                )
+                
+                embed.add_field(
+                    name="🎭 Personalities",
+                    value=f"**Tested:** {len(personality_stats)}\n" + "\n".join([f"• {p.replace('_', ' ').title()}: {s['announcements']}" for p, s in list(personality_stats.items())[:3]]),
+                    inline=True
+                )
+                
+                embed.add_field(
+                    name="📁 File Contents",
+                    value="• Complete announcements database\n• All user feedback\n• Statistical summaries\n• Raw data for analysis",
+                    inline=False
+                )
+                
+                embed.set_footer(text="Use this data for comprehensive AI analysis and fine-tuning")
+                
+                # Send file
+                with open(filename, 'rb') as f:
+                    file = discord.File(f, filename=filename)
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(embed=embed, file=file)
+                    else:
+                        await ctx.send(embed=embed, file=file)
+                
+                # Clean up file
+                import os
+                os.remove(filename)
+                    
+            except Exception as e:
+                await ctx.send(f"❌ Failed to download AI data: {str(e)}")
+        
+        @self.bot.hybrid_command(name='ai_status', description='Check AI announcement system status (RESEARCH)')
+        @commands.is_owner()
+        async def ai_status_cmd(ctx):
+            """Check current status and statistics of the AI announcement system"""
+            try:
+                if hasattr(ctx, 'defer'):
+                    await ctx.defer()
+                
+                random_announcer = self.get_random_announcer()
+                if not random_announcer:
+                    await ctx.send("❌ Random announcer is not initialized!")
+                    return
+                
+                # Check system status
+                is_running = random_announcer.random_announcement_task.is_running() if hasattr(random_announcer, 'random_announcement_task') else False
+                has_ai = random_announcer.gemini_client is not None
+                has_db = (random_announcer.ai_announcements_collection is not None and 
+                         random_announcer.feedback_collection is not None)
+                
+                # Get recent statistics (last 24 hours)
+                recent_stats = await random_announcer.get_feedback_stats(1)  # Last 24 hours
+                weekly_stats = await random_announcer.get_feedback_stats(7)  # Last 7 days
+                
+                # Get database counts
+                total_announcements = 0
+                total_feedback = 0
+                if has_db:
+                    total_announcements = random_announcer.ai_announcements_collection.count_documents({})
+                    total_feedback = random_announcer.feedback_collection.count_documents({})
+                
+                # Get recent activity (last 24 hours)
+                recent_announcements = 0
+                recent_feedback = 0
+                if has_db:
+                    from datetime import datetime, timedelta
+                    yesterday = datetime.now() - timedelta(days=1)
+                    recent_announcements = random_announcer.ai_announcements_collection.count_documents({
+                        "created_at": {"$gte": yesterday}
+                    })
+                    recent_feedback = random_announcer.feedback_collection.count_documents({
+                        "created_at": {"$gte": yesterday}
+                    })
+                
+                # Calculate overall approval rating
+                overall_approval = 0
+                if weekly_stats:
+                    total_positive = sum(stats.get('good', 0) + stats.get('love', 0) for stats in weekly_stats.values())
+                    total_responses = sum(sum(stats.values()) for stats in weekly_stats.values())
+                    if total_responses > 0:
+                        overall_approval = (total_positive / total_responses) * 100
+                
+                # Create status embed
+                embed = discord.Embed(
+                    title="🤖 AI Announcement System Status",
+                    color=discord.Color.green() if is_running else discord.Color.orange(),
+                    timestamp=discord.utils.utcnow()
+                )
+                
+                # System status
+                status_emoji = "🟢" if is_running else "🟡"
+                embed.add_field(
+                    name=f"{status_emoji} System Status",
+                    value=f"**Running:** {'✅ Yes' if is_running else '⏸️ Stopped'}\n**AI Available:** {'✅ Yes' if has_ai else '❌ No'}\n**Database:** {'✅ Connected' if has_db else '❌ Disconnected'}",
+                    inline=True
+                )
+                
+                # Data overview
+                embed.add_field(
+                    name="📊 Data Overview",
+                    value=f"**Total Announcements:** {total_announcements:,}\n**Total Feedback:** {total_feedback:,}\n**Overall Approval:** {overall_approval:.1f}%",
+                    inline=True
+                )
+                
+                # Recent activity (24h)
+                embed.add_field(
+                    name="📈 Recent Activity (24h)",
+                    value=f"**New Announcements:** {recent_announcements}\n**New Feedback:** {recent_feedback}\n**Avg per Hour:** {recent_feedback/24:.1f}",
+                    inline=True
+                )
+                
+                # Personality performance (top 3 this week)
+                if weekly_stats:
+                    personality_performance = []
+                    for personality, stats in weekly_stats.items():
+                        total = sum(stats.values())
+                        if total > 0:
+                            positive = stats.get('good', 0) + stats.get('love', 0)
+                            approval = (positive / total) * 100
+                            personality_performance.append((personality, approval, total))
+                    
+                    personality_performance.sort(key=lambda x: x[1], reverse=True)
+                    
+                    if personality_performance:
+                        top_personalities = []
+                        for personality, approval, total in personality_performance[:3]:
+                            emoji = "🏆" if approval >= 80 else "🥈" if approval >= 60 else "🥉"
+                            top_personalities.append(f"{emoji} {personality.replace('_', ' ').title()}: {approval:.1f}% ({total})")
+                        
+                        embed.add_field(
+                            name="🎭 Top Personalities (7 days)",
+                            value="\n".join(top_personalities) if top_personalities else "No data yet",
+                            inline=False
+                        )
+                
+                # System configuration
+                test_channels = getattr(random_announcer, 'test_channels', [])
+                embed.add_field(
+                    name="⚙️ Configuration",
+                    value=f"**Test Channels:** {len(test_channels)}\n**Personalities:** {len(random_announcer.personality_variations)}\n**Interval:** 15 minutes",
+                    inline=True
+                )
+                
+                # Next announcement (if running)
+                if is_running and hasattr(random_announcer, 'random_announcement_task'):
+                    try:
+                        next_run = random_announcer.random_announcement_task.next_iteration
+                        if next_run:
+                            time_until = next_run - datetime.now().astimezone()
+                            minutes_until = max(0, int(time_until.total_seconds() / 60))
+                            embed.add_field(
+                                name="⏰ Next Announcement",
+                                value=f"In ~{minutes_until} minutes",
+                                inline=True
+                            )
+                    except:
+                        pass
+                
+                # Add recommendations
+                recommendations = []
+                if not is_running:
+                    recommendations.append("• Start announcements with `/start_announcements`")
+                if not has_ai:
+                    recommendations.append("• Configure Gemini AI key in environment")
+                if total_feedback < 50:
+                    recommendations.append("• Need more feedback data for reliable analysis")
+                if overall_approval < 60:
+                    recommendations.append("• Consider adjusting AI prompts or personalities")
+                
+                if recommendations:
+                    embed.add_field(
+                        name="💡 Recommendations",
+                        value="\n".join(recommendations),
+                        inline=False
+                    )
+                
+                embed.set_footer(text="🔬 AI Research System • Use /download_all_ai_data for complete export")
+                
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(embed=embed)
+                else:
+                    await ctx.send(embed=embed)
+                    
+            except Exception as e:
+                await ctx.send(f"❌ Failed to get AI status: {str(e)}")
