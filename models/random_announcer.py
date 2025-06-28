@@ -129,13 +129,14 @@ class RandomAnnouncer:
                         
                         videos = []
                         for entry in feed.entries[:10]:  # Get last 10 videos
+                            link = getattr(entry, 'link', '')
                             video = {
-                                'title': entry.title,
-                                'link': entry.link,
+                                'title': getattr(entry, 'title', 'Unknown'),
+                                'link': link,
                                 'description': entry.get('summary', ''),
                                 'author': entry.get('author', 'Unknown'),
                                 'published': entry.get('published', ''),
-                                'video_id': entry.link.split('v=')[-1] if 'v=' in entry.link else ''
+                                'video_id': link.split('v=')[-1] if isinstance(link, str) and 'v=' in link else ''
                             }
                             videos.append(video)
                         
@@ -306,55 +307,54 @@ When announcing videos, you address the server members as "Riko simps" with fond
                 logger.warning(f"Configured guild {Config.GUILD_ID} not found")
                 return
             
-            # Post to image reaction channels for testing
-            posted_count = 0
-            for channel_id in Config.IMAGE_REACTION_CHANNELS:
-                channel = guild.get_channel(channel_id)
-                if channel and isinstance(channel, discord.TextChannel):
-                    try:
-                        # Create embed for the test announcement
-                        embed = discord.Embed(
-                            title="🧪 Ino Personality Test",
-                            description=announcement,
-                            color=self._get_personality_color(personality),
-                            timestamp=discord.utils.utcnow()
-                        )
-                        
-                        embed.add_field(
-                            name="Test Details",
-                            value=f"**Personality:** {personality.title()}\n"
-                                  f"**Video:** {video.get('title', 'Unknown')[:50]}...\n"
-                                  f"**Author:** {video.get('author', 'Unknown')}",
-                            inline=False
-                        )
-                        
-                        embed.set_author(
-                            name=f"Ino ({personality.title()} Mode)",
-                            icon_url=self.bot.user.display_avatar.url if self.bot.user else None
-                        )
-                        embed.set_footer(text="Random Announcement Test • Research Purpose")
-                        
-                        # Send the announcement
-                        message = await channel.send(embed=embed)
-                        
-                        # Add feedback reactions
-                        await message.add_reaction("👍")
-                        await message.add_reaction("👎")
-                        await message.add_reaction("❤️")  # Love this personality
-                        await message.add_reaction("😴")  # Boring/meh
-                        
-                        posted_count += 1
-                        logger.info(f"Posted {personality} test announcement to #{channel.name}")
-                        
-                        # Small delay between posts
-                        await asyncio.sleep(0.5)
-                        
-                    except discord.Forbidden:
-                        logger.warning(f"No permission to post in #{channel.name}")
-                    except discord.HTTPException as e:
-                        logger.error(f"Failed to post announcement in #{channel.name}: {e}")
-                    except Exception as e:
-                        logger.error(f"Unexpected error posting to #{channel.name}: {e}")
+            # Post to specific test channel for random announcements
+            test_channel_id = 1387426943745654906
+            channel = guild.get_channel(test_channel_id)
+            if channel and isinstance(channel, discord.TextChannel):
+                try:
+                    # Create embed for the test announcement
+                    embed = discord.Embed(
+                        title="🧪 Ino Personality Test",
+                        description=announcement,
+                        color=self._get_personality_color(personality),
+                        timestamp=discord.utils.utcnow()
+                    )
+                    
+                    embed.add_field(
+                        name="Test Details",
+                        value=f"**Personality:** {personality.title()}\n"
+                              f"**Video:** {video.get('title', 'Unknown')[:50]}...\n"
+                              f"**Author:** {video.get('author', 'Unknown')}",
+                        inline=False
+                    )
+                    
+                    embed.set_author(
+                        name=f"Ino ({personality.title()} Mode)",
+                        icon_url=self.bot.user.display_avatar.url if self.bot.user else None
+                    )
+                    embed.set_footer(text="Random Announcement Test • Research Purpose")
+                    
+                    # Send the announcement
+                    message = await channel.send(embed=embed)
+                    
+                    # Add feedback reactions
+                    await message.add_reaction("👍")
+                    await message.add_reaction("👎")
+                    await message.add_reaction("❤️")  # Love this personality
+                    await message.add_reaction("😴")  # Boring/meh
+                    
+                    posted_count = 1
+                    logger.info(f"Posted {personality} test announcement to #{channel.name}")
+                    
+                except discord.Forbidden:
+                    logger.warning(f"No permission to post in #{channel.name}")
+                except discord.HTTPException as e:
+                    logger.error(f"Failed to post announcement in #{channel.name}: {e}")
+                except Exception as e:
+                    logger.error(f"Unexpected error posting to #{channel.name}: {e}")
+            else:
+                logger.warning(f"Test channel {test_channel_id} not found or not accessible")
+                posted_count = 0
             
             if posted_count > 0:
                 logger.info(f"Successfully posted {personality} test announcement to {posted_count} channels")
