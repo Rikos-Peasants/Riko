@@ -39,37 +39,7 @@ class PersonalityFeedbackView(discord.ui.View):
     async def feedback_boring(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._handle_feedback(interaction, 'boring', '😴')
     
-    @discord.ui.button(label='🔄 Regenerate', style=discord.ButtonStyle.primary, custom_id='regenerate')
-    async def regenerate(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer(ephemeral=True)
-        
-        try:
-            # Get the RandomAnnouncer instance from the bot
-            random_announcer = getattr(interaction.client, 'random_announcer', None)
-            if not random_announcer:
-                await interaction.followup.send("❌ Random announcer not available!", ephemeral=True)
-                return
-            
-            # Generate new announcement with same personality and video
-            new_announcement = await random_announcer.generate_ino_announcement(self.video_data, self.personality)
-            if new_announcement:
-                # Update the embed with new announcement
-                if interaction.message and interaction.message.embeds:
-                    embed = interaction.message.embeds[0]
-                    embed.description = f"## {new_announcement}\n\n*Testing AI personality variations for optimal video announcements*"
-                    embed.timestamp = discord.utils.utcnow()
-                    
-                    await interaction.edit_original_response(embed=embed, view=self)
-                else:
-                    await interaction.followup.send("❌ Could not update message!", ephemeral=True)
-                    return
-                await interaction.followup.send(f"🔄 **Regenerated {self.personality.title()} announcement!**", ephemeral=True)
-            else:
-                await interaction.followup.send("❌ Failed to regenerate announcement!", ephemeral=True)
-                
-        except Exception as e:
-            logger.error(f"Error regenerating announcement: {e}")
-            await interaction.followup.send("❌ Error occurred while regenerating!", ephemeral=True)
+
     
     async def _handle_feedback(self, interaction: discord.Interaction, feedback_type: str, emoji: str):
         """Handle feedback button clicks"""
@@ -573,8 +543,8 @@ EXAMPLES:
                     
                     # Add feedback instructions
                     embed.add_field(
-                        name="🗳️ Your Feedback Matters",
-                        value="👍 Good announcement\n👎 Needs improvement\n❤️ Love this personality\n😴 Too boring/generic",
+                        name="🗳️ Rate This Announcement",
+                        value="👍 Good • 👎 Needs Work • ❤️ Love It • 😴 Too Boring",
                         inline=False
                     )
                     
