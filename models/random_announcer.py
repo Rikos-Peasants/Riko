@@ -21,10 +21,10 @@ class RandomAnnouncer:
         
         # Test YouTube channels for random video selection
         self.test_channels = [
-            "UC8rcEBzJSleTkf_-agPM20g",  # BlueArchive_JP
+            "UCmgf8DJrAXFnU7j3u0kklUQ",  # BlueArchive_JP
             "UCdBK94H6oZT2Q7l0-b0xmMg",  # ShortCircuit
             "UChhMeymAOC5PNbbnqxD_w4g",  # JustRayen
-            "UCcNxBnLuFa3Rp3nJX3wBKcw"   # pikachubolk
+            "UCAn8HtI94JPEgO87tCg6dww"   # pikachubolk (Correct ID)
         ]
         
         # Ino personality variations for testing
@@ -230,10 +230,10 @@ Remember to include the role ping <@&1375737416325009552> at the end."""
     def _get_channel_context(self, channel_id: str, video_author: str) -> str:
         """Get context about the channel for the AI"""
         channel_contexts = {
-            "UC8rcEBzJSleTkf_-agPM20g": "Blue Archive JP official channel - game content",
-            "UCdBK94H6oZT2Q7l0-b0xmMg": "ShortCircuit tech channel - tech reviews and content",
+            "UCmgf8DJrAXFnU7j3u0kklUQ": "Blue Archive official channel - mobile game content",
+            "UCdBK94H6oZT2Q7l0-b0xmMg": "ShortCircuit tech channel - tech reviews and unboxings",
             "UChhMeymAOC5PNbbnqxD_w4g": "JustRayen - Riko's human collaborator who creates content",
-            "UCcNxBnLuFa3Rp3nJX3wBKcw": "pikachubolk - guest creator/collaborator"
+            "UCAn8HtI94JPEgO87tCg6dww": "pikachubolk - guest creator/collaborator"
         }
         
         context = channel_contexts.get(channel_id, "Unknown channel")
@@ -312,27 +312,74 @@ When announcing videos, you address the server members as "Riko simps" with fond
             channel = guild.get_channel(test_channel_id)
             if channel and isinstance(channel, discord.TextChannel):
                 try:
-                    # Create embed for the test announcement
+                    # Get video info for enhanced embed
+                    video_title = video.get('title', 'Unknown Video')
+                    video_author = video.get('author', 'Unknown')
+                    video_link = video.get('link', '')
+                    channel_id = video.get('test_channel_id', '')
+                    
+                    # Get channel name for display
+                    channel_names = {
+                        "UCmgf8DJrAXFnU7j3u0kklUQ": "Blue Archive",
+                        "UCdBK94H6oZT2Q7l0-b0xmMg": "ShortCircuit", 
+                        "UChhMeymAOC5PNbbnqxD_w4g": "Just Rayen",
+                        "UCAn8HtI94JPEgO87tCg6dww": "pikachubolk"
+                    }
+                    channel_name = channel_names.get(channel_id, "Unknown Channel")
+                    
+                    # Create enhanced embed
                     embed = discord.Embed(
-                        title="🧪 Ino Personality Test",
-                        description=announcement,
+                        title="🎭 Ino Personality Research",
+                        description=f"## {announcement}\n\n*Testing AI personality variations for optimal video announcements*",
                         color=self._get_personality_color(personality),
                         timestamp=discord.utils.utcnow()
                     )
                     
+                    # Add personality info with emoji
+                    personality_emojis = {
+                        'standard': '⚖️',
+                        'extra_teasing': '😏', 
+                        'more_caring': '💖',
+                        'formal_shrine': '⛩️',
+                        'exasperated': '😤'
+                    }
+                    personality_emoji = personality_emojis.get(personality, '🎭')
+                    
                     embed.add_field(
-                        name="Test Details",
-                        value=f"**Personality:** {personality.title()}\n"
-                              f"**Video:** {video.get('title', 'Unknown')[:50]}...\n"
-                              f"**Author:** {video.get('author', 'Unknown')}",
+                        name=f"{personality_emoji} Personality Mode",
+                        value=f"**{personality.replace('_', ' ').title()}**\n{self.personality_variations[personality]['description']}",
+                        inline=True
+                    )
+                    
+                    # Add video source info
+                    embed.add_field(
+                        name="📺 Test Video Source",
+                        value=f"**Channel:** {channel_name}\n**Author:** {video_author}",
+                        inline=True
+                    )
+                    
+                    # Add feedback instructions
+                    embed.add_field(
+                        name="🗳️ Your Feedback Matters",
+                        value="👍 Good announcement\n👎 Needs improvement\n❤️ Love this personality\n😴 Too boring/generic",
                         inline=False
                     )
                     
+                    # Add video title as clickable link
+                    if video_link:
+                        embed.add_field(
+                            name="🎬 Source Video",
+                            value=f"[{video_title[:80]}{'...' if len(video_title) > 80 else ''}]({video_link})",
+                            inline=False
+                        )
+                    
                     embed.set_author(
-                        name=f"Ino ({personality.title()} Mode)",
+                        name=f"Ino - {personality.replace('_', ' ').title()} Mode",
                         icon_url=self.bot.user.display_avatar.url if self.bot.user else None
                     )
-                    embed.set_footer(text="Random Announcement Test • Research Purpose")
+                    embed.set_footer(
+                        text="🔬 Research Data • Help improve Ino's announcements • React below!"
+                    )
                     
                     # Send the announcement
                     message = await channel.send(embed=embed)
