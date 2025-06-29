@@ -3026,3 +3026,88 @@ class CommandsController:
                     
             except Exception as e:
                 await ctx.send(f"❌ Failed to clear bookmarks: {str(e)}")
+        
+        @self.bot.hybrid_command(name='liked_images', description='View images you or another user has liked')
+        async def liked_images_cmd(ctx, user: discord.Member = None, page: int = 1):
+            """View images that a user has liked with pagination"""
+            try:
+                if hasattr(ctx, 'defer'):
+                    await ctx.defer()
+                
+                leaderboard_manager = self.get_leaderboard_manager()
+                if not leaderboard_manager:
+                    await ctx.send("❌ Leaderboard manager is not available!")
+                    return
+                
+                # Use command author if no user specified
+                target_user = user or ctx.author
+                
+                # Get liked images from the database
+                per_page = 5
+                skip = (page - 1) * per_page
+                
+                liked_images_data = await leaderboard_manager.get_user_liked_images(target_user.id, per_page, skip)
+                total_liked = await leaderboard_manager.get_user_liked_images_count(target_user.id)
+                max_pages = (total_liked + per_page - 1) // per_page
+                
+                liked_images = {
+                    'images': liked_images_data,
+                    'total': total_liked,
+                    'max_pages': max_pages
+                }
+                
+                if not liked_images['images']:
+                    if target_user == ctx.author:
+                        await ctx.send("👍 You haven't liked any images yet! React with 👍 on images to like them.")
+                    else:
+                        await ctx.send(f"👍 {target_user.display_name} hasn't liked any images yet!")
+                    return
+                
+                # Create embed
+                embed = discord.Embed(
+                    title=f"👍 {target_user.display_name}'s Liked Images",
+                    description=f"Page {page}/{liked_images['max_pages']} • {liked_images['total']} total liked images",
+                    color=0x2ecc71
+                )
+                
+                for i, image_data in enumerate(liked_images['images'], 1):
+                    image_num = ((page - 1) * 5) + i
+                    
+                    # Format the image entry
+                    content = image_data.get('content', '')[:100]
+                    if len(image_data.get('content', '')) > 100:
+                        content += "..."
+                    
+                    created_at = image_data.get('created_at')
+                    if isinstance(created_at, str):
+                        from datetime import datetime
+                        created_at = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                    
+                    field_value = f"**Author:** {image_data.get('author_name', 'Unknown')}\n"
+                    if content:
+                        field_value += f"**Content:** {content}\n"
+                    field_value += f"**Score:** {image_data.get('score', 0)} (👍{image_data.get('thumbs_up', 0)} - 👎{image_data.get('thumbs_down', 0)})\n"
+                    if created_at:
+                        field_value += f"**Posted:** <t:{int(created_at.timestamp())}:R>\n"
+                    if image_data.get('jump_url'):
+                        field_value += f"**[Jump to Message]({image_data['jump_url']})**"
+                    
+                    embed.add_field(
+                        name=f"{image_num}. Message ID: {image_data['message_id']}",
+                        value=field_value,
+                        inline=False
+                    )
+                
+                # Add navigation info
+                if liked_images['max_pages'] > 1:
+                    if target_user == ctx.author:
+                        embed.set_footer(text=f"Use /liked_images page:{page+1} for next page" if page < liked_images['max_pages'] else "This is the last page")
+                    else:
+                        embed.set_footer(text=f"Use /liked_images user:{target_user.mention} page:{page+1} for next page" if page < liked_images['max_pages'] else "This is the last page")
+                
+                await ctx.send(embed=embed)
+                
+            except Exception as e:
+                await ctx.send(f"❌ Failed to get liked images: {str(e)}")
+        
+        

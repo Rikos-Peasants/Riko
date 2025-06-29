@@ -344,7 +344,13 @@ class EventsController:
             return
         
         # Handle bookmark reactions separately
-        if str(reaction.emoji) == '🔖':
+        emoji_str = str(reaction.emoji)
+        logger.info(f"Reaction detected: '{emoji_str}' (repr: {repr(emoji_str)}) by {user.display_name}")
+        
+        # Check for bookmark emoji (multiple possible variants)
+        bookmark_emojis = ['🔖', '📑', '📌', '🏷️']
+        if emoji_str in bookmark_emojis:
+            logger.info(f"Processing bookmark reaction '{emoji_str}' by {user.display_name}")
             await self._handle_bookmark_reaction(reaction, user, added)
             return
         
@@ -378,6 +384,14 @@ class EventsController:
             score_change = 1 if added else -1
         elif str(reaction.emoji) == '👎':
             score_change = -1 if added else 1
+        
+        # Track the user reaction
+        await self.bot.leaderboard_manager.track_user_reaction(
+            user_id=user.id,
+            message_id=str(message.id),
+            emoji=str(reaction.emoji),
+            added=added
+        )
         
         # Update the leaderboard for the image author
         if score_change != 0:

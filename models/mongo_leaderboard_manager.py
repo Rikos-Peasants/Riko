@@ -25,6 +25,7 @@ class MongoLeaderboardManager:
         self.warnings_collection = None  # New collection for warnings
         self.settings_collection = None  # New collection for bot settings
         self.bookmarks_collection = None  # New collection for user bookmarks
+        self.user_reactions_collection = None  # New collection for tracking user reactions
         self._connect()
     
     def _connect(self):
@@ -40,6 +41,7 @@ class MongoLeaderboardManager:
             self.warnings_collection = self.db['warnings']  # New collection for warnings
             self.settings_collection = self.db['settings']  # New collection for bot settings
             self.bookmarks_collection = self.db['bookmarks']  # New collection for user bookmarks
+            self.user_reactions_collection = self.db['user_reactions']  # New collection for tracking user reactions
             
             # Create indexes for better performance
             self.collection.create_index("user_id", unique=True)
@@ -67,7 +69,12 @@ class MongoLeaderboardManager:
             self.bookmarks_collection.create_index([("user_id", 1), ("created_at", -1)])
             self.bookmarks_collection.create_index([("message_id", 1)])
             
-            logger.info(f"Connected to MongoDB database '{self.database_name}', collections: {self.collection_name}, image_messages, nsfwban_users, warnings, settings, bookmarks")
+            # Create indexes for user reactions
+            self.user_reactions_collection.create_index([("user_id", 1), ("message_id", 1), ("emoji", 1)], unique=True)
+            self.user_reactions_collection.create_index([("user_id", 1), ("created_at", -1)])
+            self.user_reactions_collection.create_index([("message_id", 1)])
+            
+            logger.info(f"Connected to MongoDB database '{self.database_name}', collections: {self.collection_name}, image_messages, nsfwban_users, warnings, settings, bookmarks, user_reactions")
             
         except (ConnectionFailure, ServerSelectionTimeoutError) as e:
             logger.error(f"Failed to connect to MongoDB: {e}")
@@ -783,4 +790,81 @@ class MongoLeaderboardManager:
             
         except Exception as e:
             logger.error(f"Error clearing user bookmarks: {e}")
+            return 0
+
+    # USER REACTIONS TRACKING METHODS
+    async def track_user_reaction(self, user_id: int, message_id: str, emoji: str, added: bool) -> bool:
+        """Track when a user adds or removes a reaction"""
+        try:
+            if added:
+                # Add reaction record
+                reaction_doc = {
+                    "user_id": str(user_id),
+                    "message_id": str(message_id),
+                    "emoji": emoji,
+                    "created_at": datetime.now()
+                }
+                
+                result = self.user_reactions_collection.update_one(
+                    {"user_id": str(user_id), "message_id": str(message_id), "emoji": emoji},
+                    {"$set": reaction_doc},
+                    upsert=True
+                )
+                
+                logger.info(f"Tracked reaction: User {user_id} {emoji} on message {message_id}")
+                return True
+            else:
+                # Remove reaction record
+                result = self.user_reactions_collection.delete_one({
+                    "user_id": str(user_id),
+                    "message_id": str(message_id),
+                    "emoji": emoji
+                })
+                
+                if result.deleted_count > 0:
+                    logger.info(f"Removed reaction tracking: User {user_id} {emoji} on message {message_id}")
+                    return True
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error tracking user reaction: {e}")
+            return False
+
+    async def get_user_liked_images(self, user_id: int, limit: int = 20, skip: int = 0) -> List[Dict]:
+        """Get images that a user has liked (reacted with 👍)"""
+        try:
+            # Get message IDs that user liked
+            liked_reactions = self.user_reactions_collection.find({
+                "user_id": str(user_id),
+                "emoji": "👍"
+            }).sort("created_at", -1).skip(skip).limit(limit)
+            
+            liked_message_ids = [reaction["message_id"] for reaction in liked_reactions]
+            
+            if not liked_message_ids:
+                return []
+            
+            # Get the actual image data for these messages
+            images = list(self.images_collection.find({
+                "message_id": {"$in": liked_message_ids}
+            }).sort("created_at", -1))
+            
+            logger.info(f"Retrieved {len(images)} liked images for user {user_id}")
+            return images
+            
+        except Exception as e:
+            logger.error(f"Error getting user liked images: {e}")
+            return []
+
+    async def get_user_liked_images_count(self, user_id: int) -> int:
+        """Get the total number of images a user has liked"""
+        try:
+            count = self.user_reactions_collection.count_documents({
+                "user_id": str(user_id),
+                "emoji": "👍"
+            })
+            return count
+            
+        except Exception as e:
+            logger.error(f"Error getting user liked images count: {e}")
             return 0 
