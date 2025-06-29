@@ -1,9 +1,11 @@
 import os
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 import logging
 from pymongo import MongoClient, DESCENDING
 from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
+from pymongo.collection import Collection
+from pymongo.database import Database
 import random
 
 logger = logging.getLogger(__name__)
@@ -11,21 +13,21 @@ logger = logging.getLogger(__name__)
 class QuestManager:
     """Manages daily quests, achievements, events, and streaks system"""
     
-    def __init__(self, connection_url: str = None, database_name: str = "Riko"):
+    def __init__(self, connection_url: Optional[str] = None, database_name: str = "Riko"):
         # Import here to avoid circular imports
         from config import Config
         
         self.connection_url = connection_url or Config.MONGO_URI
         self.database_name = database_name
-        self.client = None
-        self.db = None
-        self.quests_collection = None
-        self.achievements_collection = None
-        self.events_collection = None
-        self.user_quests_collection = None
-        self.user_achievements_collection = None
-        self.user_stats_collection = None
-        self.user_streaks_collection = None
+        self.client: Optional[MongoClient] = None
+        self.db: Optional[Database] = None
+        self.quests_collection: Optional[Collection] = None
+        self.achievements_collection: Optional[Collection] = None
+        self.events_collection: Optional[Collection] = None
+        self.user_quests_collection: Optional[Collection] = None
+        self.user_achievements_collection: Optional[Collection] = None
+        self.user_stats_collection: Optional[Collection] = None
+        self.user_streaks_collection: Optional[Collection] = None
         self._connect()
         self._initialize_quests_and_achievements()
     
@@ -61,8 +63,22 @@ class QuestManager:
             logger.error(f"Failed to connect to MongoDB: {e}")
             raise Exception(f"MongoDB connection failed: {e}")
     
+    def _ensure_connected(self) -> bool:
+        """Ensure database connection is available"""
+        return (self.db is not None and 
+                self.quests_collection is not None and 
+                self.achievements_collection is not None and 
+                self.events_collection is not None and 
+                self.user_quests_collection is not None and 
+                self.user_achievements_collection is not None and 
+                self.user_stats_collection is not None and 
+                self.user_streaks_collection is not None)
+    
     def _initialize_quests_and_achievements(self):
         """Initialize default quests and achievements if they don't exist"""
+        if not self._ensure_connected():
+            logger.error("Cannot initialize quests and achievements: Database not connected")
+            return
         # Daily Quests
         daily_quests = [
             {
@@ -471,9 +487,12 @@ class QuestManager:
             logger.error(f"Error getting user achievements: {e}")
             return []
     
-    async def create_event(self, name: str, description: str, start_date: datetime, end_date: datetime, created_by_id: int, created_by_name: str) -> str:
+    async def create_event(self, name: str, description: str, start_date: datetime, end_date: datetime, created_by_id: int, created_by_name: str) -> Optional[str]:
         """Create a new image contest event"""
         try:
+            if not self._ensure_connected():
+                logger.error("Cannot create event: Database not connected")
+                return None
             event = {
                 "name": name,
                 "description": description,
@@ -541,11 +560,16 @@ class QuestManager:
         except Exception as e:
             logger.error(f"Error adding event contestant: {e}")
     
-    async def end_event(self, event_id: str, leaderboard_manager) -> Dict:
+    async def end_event(self, event_id: str, leaderboard_manager) -> Optional[Dict]:
         """End an event and determine the winner"""
         try:
+            if not self._ensure_connected():
+                logger.error("Cannot end event: Database not connected")
+                return None
+                
             from bson import ObjectId
             
+            assert self.events_collection is not None  # Type assertion after connection check
             event = self.events_collection.find_one({"_id": ObjectId(event_id)})
             if not event:
                 return None
@@ -556,7 +580,7 @@ class QuestManager:
             
             for contestant in event.get("contestants", []):
                 # Get the image message from leaderboard manager
-                image_data = await leaderboard_manager.images_collection.find_one({
+                image_data = leaderboard_manager.images_collection.find_one({
                     "message_id": contestant["message_id"]
                 })
                 
@@ -570,6 +594,7 @@ class QuestManager:
                     }
             
             # Update event with winner
+            assert self.events_collection is not None  # Type assertion
             self.events_collection.update_one(
                 {"_id": ObjectId(event_id)},
                 {

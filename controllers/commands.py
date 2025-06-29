@@ -2716,3 +2716,137 @@ class CommandsController:
                     
             except Exception as e:
                 await ctx.send(f"❌ Failed to get AI status: {str(e)}")
+        
+        @self.bot.hybrid_command(name='debug_events', description='Debug events system (Bot owners only)')
+        @commands.is_owner()
+        async def debug_events_cmd(ctx):
+            """Debug the events system to see what's wrong"""
+            try:
+                if hasattr(ctx, 'defer'):
+                    await ctx.defer()
+                
+                events_controller = self.get_events_controller()
+                if not events_controller or not events_controller.quest_manager:
+                    await ctx.send("❌ Events system is not initialized!")
+                    return
+                
+                quest_manager = events_controller.quest_manager
+                
+                # Check scheduler status
+                scheduler_controller = self.get_scheduler_controller()
+                scheduler_running = False
+                expired_check_running = False
+                
+                if scheduler_controller:
+                    scheduler_running = True
+                    if hasattr(scheduler_controller, 'check_expired_events'):
+                        expired_check_running = scheduler_controller.check_expired_events.is_running()
+                
+                # Get all events (active and inactive)
+                all_events = list(quest_manager.events_collection.find({}))
+                active_events = [e for e in all_events if e.get('is_active', False)]
+                
+                # Get expired events
+                from datetime import datetime
+                now = datetime.now()
+                expired_events = [e for e in active_events if e.get('end_date', now) < now]
+                
+                embed = discord.Embed(
+                    title="🔧 Events System Debug",
+                    color=discord.Color.blue(),
+                    timestamp=discord.utils.utcnow()
+                )
+                
+                # System status
+                embed.add_field(
+                    name="🤖 System Status",
+                    value=f"**Quest Manager:** {'✅ Online' if quest_manager else '❌ Offline'}\n**Scheduler:** {'✅ Running' if scheduler_running else '❌ Stopped'}\n**Expired Check:** {'✅ Running' if expired_check_running else '❌ Stopped'}",
+                    inline=True
+                )
+                
+                # Events overview
+                embed.add_field(
+                    name="📊 Events Overview",
+                    value=f"**Total Events:** {len(all_events)}\n**Active Events:** {len(active_events)}\n**Expired Events:** {len(expired_events)}",
+                    inline=True
+                )
+                
+                # Recent events
+                if all_events:
+                    recent_events = sorted(all_events, key=lambda x: x.get('created_at', datetime.min), reverse=True)[:3]
+                    event_list = []
+                    for event in recent_events:
+                        status = "🟢 Active" if event.get('is_active', False) else "🔴 Ended"
+                        end_date = event.get('end_date', datetime.now())
+                        if isinstance(end_date, str):
+                            end_date = datetime.fromisoformat(end_date)
+                        expired = "⏰ Expired" if end_date < now and event.get('is_active', False) else ""
+                        event_list.append(f"**{event.get('name', 'Unknown')}** {status} {expired}")
+                    
+                    embed.add_field(
+                        name="📅 Recent Events",
+                        value="\n".join(event_list),
+                        inline=False
+                    )
+                
+                # Troubleshooting tips
+                tips = []
+                if not scheduler_running:
+                    tips.append("• Scheduler not running - restart bot")
+                if not expired_check_running:
+                    tips.append("• Expired events check not running")
+                if expired_events:
+                    tips.append(f"• {len(expired_events)} events need manual ending")
+                if not tips:
+                    tips.append("• System looks healthy!")
+                
+                embed.add_field(
+                    name="💡 Troubleshooting",
+                    value="\n".join(tips),
+                    inline=False
+                )
+                
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(embed=embed)
+                else:
+                    await ctx.send(embed=embed)
+                    
+            except Exception as e:
+                await ctx.send(f"❌ Failed to debug events: {str(e)}")
+        
+        @self.bot.hybrid_command(name='force_check_expired', description='Force check for expired events (Bot owners only)')
+        @commands.is_owner()
+        async def force_check_expired_cmd(ctx):
+            """Manually trigger the expired events check"""
+            try:
+                if hasattr(ctx, 'defer'):
+                    await ctx.defer()
+                
+                scheduler_controller = self.get_scheduler_controller()
+                if not scheduler_controller:
+                    await ctx.send("❌ Scheduler controller is not available!")
+                    return
+                
+                # Manually run the expired events check
+                await scheduler_controller.check_expired_events()
+                
+                embed = discord.Embed(
+                    title="✅ Expired Events Check Complete",
+                    description="Manually triggered the expired events check. Any expired events should now be ended.",
+                    color=discord.Color.green(),
+                    timestamp=discord.utils.utcnow()
+                )
+                
+                embed.add_field(
+                    name="ℹ️ What this does",
+                    value="• Finds events past their end date\n• Determines winners based on image scores\n• Marks events as ended\n• Posts winner announcements",
+                    inline=False
+                )
+                
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(embed=embed)
+                else:
+                    await ctx.send(embed=embed)
+                    
+            except Exception as e:
+                await ctx.send(f"❌ Failed to force check expired events: {str(e)}")
