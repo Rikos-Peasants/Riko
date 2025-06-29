@@ -3316,100 +3316,93 @@ class CommandsController:
                 await ctx.send(f"❌ Error testing bookmark: {str(e)}")
         
         # PURGE COMMANDS
-        @self.bot.hybrid_command(name='purge', description='Purge messages with various filters')
+        @self.bot.hybrid_group(name='purge', description='Purge messages with various filters')
         @commands.has_permissions(manage_messages=True)
-        async def purge_cmd(ctx, filter_type: str, amount: int = 100):
-            """
-            Purge messages with different filters
-            
-            Filters:
-            - humans: Delete messages from human users only
-            - media: Delete messages with attachments/images
-            - embeds: Delete messages with embeds
-            - bots: Delete messages from bots only
-            - all: Delete all messages
-            """
-            try:
-                if hasattr(ctx, 'defer'):
-                    await ctx.defer(ephemeral=True)
-                
-                # Validate filter type
-                valid_filters = ['humans', 'media', 'embeds', 'bots', 'all']
-                if filter_type.lower() not in valid_filters:
-                    embed = discord.Embed(
-                        title="❌ Invalid Filter",
-                        description=f"Valid filters: `{', '.join(valid_filters)}`",
-                        color=0xe74c3c
-                    )
-                    await ctx.send(embed=embed, ephemeral=True)
-                    return
-                
-                # Validate amount
-                if amount < 1 or amount > 1000:
-                    embed = discord.Embed(
-                        title="❌ Invalid Amount",
-                        description="Amount must be between 1 and 1000",
-                        color=0xe74c3c
-                    )
-                    await ctx.send(embed=embed, ephemeral=True)
-                    return
-                
-                # Create filter function based on type
-                filter_func = self._get_purge_filter(filter_type.lower())
-                
-                # Send confirmation embed
+        async def purge_group(ctx):
+            """Purge messages with various filters"""
+            if ctx.invoked_subcommand is None:
                 embed = discord.Embed(
-                    title="🗑️ Purge Confirmation",
-                    description=f"**Filter:** {filter_type.title()}\n**Amount:** Up to {amount} messages\n**Channel:** {ctx.channel.mention}",
-                    color=0xf39c12
+                    title="🗑️ Purge Commands",
+                    description="Use one of the following subcommands:",
+                    color=0x3498db
                 )
-                embed.add_field(
-                    name="⚠️ Warning",
-                    value="This action cannot be undone!",
-                    inline=False
-                )
-                embed.set_footer(text="This message will auto-delete in 30 seconds")
-                
-                # Create confirmation view
-                view = PurgeConfirmationView(ctx, filter_func, amount, filter_type)
-                message = await ctx.send(embed=embed, view=view, ephemeral=True)
-                
-                # Auto-delete after 30 seconds
-                await asyncio.sleep(30)
-                try:
-                    await message.delete()
-                except:
-                    pass
-                    
-            except Exception as e:
-                await ctx.send(f"❌ Failed to initiate purge: {str(e)}", ephemeral=True)
+                embed.add_field(name="/purge humans [amount]", value="Delete messages from human users", inline=False)
+                embed.add_field(name="/purge bots [amount]", value="Delete messages from bots", inline=False)
+                embed.add_field(name="/purge media [amount]", value="Delete messages with attachments/images", inline=False)
+                embed.add_field(name="/purge embeds [amount]", value="Delete messages with embeds", inline=False)
+                embed.add_field(name="/purge all [amount]", value="Delete all messages", inline=False)
+                embed.set_footer(text="Amount defaults to 100, max 1000")
+                await ctx.send(embed=embed, ephemeral=True)
         
-        def _get_purge_filter(self, filter_type: str):
-            """Get the appropriate filter function for purge type"""
-            def filter_humans(message):
-                return not message.author.bot
-            
+        @purge_group.command(name='humans', description='Delete messages from human users only')
+        async def purge_humans_cmd(ctx, amount: int = 100):
+            """Delete messages from human users only"""
+            await self._execute_purge(ctx, lambda msg: not msg.author.bot, amount, "humans")
+        
+        @purge_group.command(name='bots', description='Delete messages from bots only')
+        async def purge_bots_cmd(ctx, amount: int = 100):
+            """Delete messages from bots only"""
+            await self._execute_purge(ctx, lambda msg: msg.author.bot, amount, "bots")
+        
+        @purge_group.command(name='media', description='Delete messages with attachments/images')
+        async def purge_media_cmd(ctx, amount: int = 100):
+            """Delete messages with attachments or embedded media"""
             def filter_media(message):
                 return (len(message.attachments) > 0 or 
                        any(embed.image or embed.video or embed.thumbnail for embed in message.embeds))
-            
-            def filter_embeds(message):
-                return len(message.embeds) > 0
-            
-            def filter_bots(message):
-                return message.author.bot
-            
-            def filter_all(message):
-                return True
-            
-            filters = {
-                'humans': filter_humans,
-                'media': filter_media,
-                'embeds': filter_embeds,
-                'bots': filter_bots,
-                'all': filter_all
-            }
-            
-            return filters.get(filter_type, filter_all)
+            await self._execute_purge(ctx, filter_media, amount, "media")
         
+        @purge_group.command(name='embeds', description='Delete messages with embeds')
+        async def purge_embeds_cmd(ctx, amount: int = 100):
+            """Delete messages containing embeds"""
+            await self._execute_purge(ctx, lambda msg: len(msg.embeds) > 0, amount, "embeds")
         
+        @purge_group.command(name='all', description='Delete all messages')
+        async def purge_all_cmd(ctx, amount: int = 100):
+            """Delete all messages regardless of type"""
+                        await self._execute_purge(ctx, lambda msg: True, amount, "all")
+    
+    async def _execute_purge(self, ctx, filter_func, amount: int, filter_type: str):
+        """Execute purge with the given filter"""
+        try:
+            if hasattr(ctx, 'defer'):
+                await ctx.defer(ephemeral=True)
+            
+            # Validate amount
+            if amount < 1 or amount > 1000:
+                embed = discord.Embed(
+                    title="❌ Invalid Amount",
+                    description="Amount must be between 1 and 1000",
+                    color=0xe74c3c
+                )
+                await ctx.send(embed=embed, ephemeral=True)
+                return
+            
+            # Send confirmation embed
+            embed = discord.Embed(
+                title="🗑️ Purge Confirmation",
+                description=f"**Filter:** {filter_type.title()}\n**Amount:** Up to {amount} messages\n**Channel:** {ctx.channel.mention}",
+                color=0xf39c12
+            )
+            embed.add_field(
+                name="⚠️ Warning",
+                value="This action cannot be undone!",
+                inline=False
+            )
+            embed.set_footer(text="This message will auto-delete in 30 seconds")
+            
+            # Create confirmation view
+            view = PurgeConfirmationView(ctx, filter_func, amount, filter_type)
+            message = await ctx.send(embed=embed, view=view, ephemeral=True)
+            
+            # Auto-delete after 30 seconds
+            await asyncio.sleep(30)
+            try:
+                await message.delete()
+            except:
+                pass
+                
+        except Exception as e:
+            await ctx.send(f"❌ Failed to initiate purge: {str(e)}", ephemeral=True)
+        
+                
