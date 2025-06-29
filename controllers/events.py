@@ -333,17 +333,14 @@ class EventsController:
         if user.bot:
             return
         
-        # Only track reactions in image channels
+        # Basic guild checks
         if not hasattr(reaction.message, 'guild') or not reaction.message.guild:
             return
         
         if reaction.message.guild.id != Config.GUILD_ID:
             return
         
-        if reaction.message.channel.id not in Config.IMAGE_REACTION_CHANNELS:
-            return
-        
-        # Handle bookmark reactions separately
+        # Handle bookmark reactions FIRST (works in any channel with images)
         emoji_str = str(reaction.emoji)
         logger.info(f"Reaction detected: '{emoji_str}' (repr: {repr(emoji_str)}) by {user.display_name}")
         
@@ -352,6 +349,10 @@ class EventsController:
         if emoji_str in bookmark_emojis:
             logger.info(f"Processing bookmark reaction '{emoji_str}' by {user.display_name}")
             await self._handle_bookmark_reaction(reaction, user, added)
+            return
+        
+        # Only track scoring reactions in designated image channels
+        if reaction.message.channel.id not in Config.IMAGE_REACTION_CHANNELS:
             return
         
         # Only track thumbs up and thumbs down for scoring

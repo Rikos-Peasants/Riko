@@ -3110,4 +3110,208 @@ class CommandsController:
             except Exception as e:
                 await ctx.send(f"❌ Failed to get liked images: {str(e)}")
         
+        @self.bot.hybrid_command(name='process_old_reactions', description='Process old reactions to build likes database (Bot owners only)')
+        @commands.is_owner()
+        async def process_old_reactions_cmd(ctx, limit: int = 100):
+            """Process old reactions from image messages to build the likes database"""
+            try:
+                if hasattr(ctx, 'defer'):
+                    await ctx.defer()
+                
+                leaderboard_manager = self.get_leaderboard_manager()
+                if not leaderboard_manager:
+                    await ctx.send("❌ Leaderboard manager is not available!")
+                    return
+                
+                await ctx.send(f"🔄 Processing old reactions from last {limit} image messages...")
+                
+                # Get recent image messages from database
+                recent_images = list(leaderboard_manager.images_collection.find().sort("created_at", -1).limit(limit))
+                
+                if not recent_images:
+                    await ctx.send("❌ No image messages found in database!")
+                    return
+                
+                processed_count = 0
+                reactions_added = 0
+                
+                for image_data in recent_images:
+                    try:
+                        message_id = image_data.get('message_id')
+                        channel_id = image_data.get('channel_id')
+                        
+                        if not message_id or not channel_id:
+                            continue
+                        
+                        # Get the actual Discord message
+                        try:
+                            channel = self.bot.get_channel(int(channel_id))
+                            if not channel:
+                                continue
+                            
+                            message = await channel.fetch_message(int(message_id))
+                            if not message:
+                                continue
+                        except:
+                            continue
+                        
+                        # Process reactions on this message
+                        for reaction in message.reactions:
+                            if str(reaction.emoji) in ['👍', '👎']:
+                                # Get all users who reacted
+                                async for user in reaction.users():
+                                    if not user.bot:  # Skip bot reactions
+                                        # Check if we already have this reaction recorded
+                                        existing = leaderboard_manager.user_reactions_collection.find_one({
+                                            "user_id": str(user.id),
+                                            "message_id": str(message_id),
+                                            "emoji": str(reaction.emoji)
+                                        })
+                                        
+                                        if not existing:
+                                            # Add the reaction to our database
+                                            await leaderboard_manager.track_user_reaction(
+                                                user.id, str(message_id), str(reaction.emoji), True
+                                            )
+                                            reactions_added += 1
+                        
+                        processed_count += 1
+                        
+                        # Update progress every 10 messages
+                        if processed_count % 10 == 0:
+                            await ctx.send(f"📊 Processed {processed_count}/{len(recent_images)} messages, added {reactions_added} reactions...")
+                    
+                    except Exception as e:
+                        logger.error(f"Error processing message {image_data.get('message_id')}: {e}")
+                        continue
+                
+                await ctx.send(f"✅ Processing complete! Processed {processed_count} messages and added {reactions_added} reaction records.")
+                
+            except Exception as e:
+                await ctx.send(f"❌ Failed to process old reactions: {str(e)}")
+        
+        @self.bot.hybrid_command(name='rebuild_likes_db', description='Rebuild the entire likes database (Bot owners only)')
+        @commands.is_owner()
+        async def rebuild_likes_db_cmd(ctx):
+            """Rebuild the entire likes database from scratch"""
+            try:
+                if hasattr(ctx, 'defer'):
+                    await ctx.defer()
+                
+                leaderboard_manager = self.get_leaderboard_manager()
+                if not leaderboard_manager:
+                    await ctx.send("❌ Leaderboard manager is not available!")
+                    return
+                
+                # Clear existing reaction data
+                await ctx.send("🗑️ Clearing existing reaction data...")
+                leaderboard_manager.user_reactions_collection.delete_many({})
+                
+                # Get all image messages
+                all_images = list(leaderboard_manager.images_collection.find())
+                
+                if not all_images:
+                    await ctx.send("❌ No image messages found in database!")
+                    return
+                
+                await ctx.send(f"🔄 Rebuilding likes database from {len(all_images)} image messages...")
+                
+                processed_count = 0
+                reactions_added = 0
+                failed_count = 0
+                
+                for image_data in all_images:
+                    try:
+                        message_id = image_data.get('message_id')
+                        channel_id = image_data.get('channel_id')
+                        
+                        if not message_id or not channel_id:
+                            failed_count += 1
+                            continue
+                        
+                        # Get the actual Discord message
+                        try:
+                            channel = self.bot.get_channel(int(channel_id))
+                            if not channel:
+                                failed_count += 1
+                                continue
+                            
+                            message = await channel.fetch_message(int(message_id))
+                            if not message:
+                                failed_count += 1
+                                continue
+                        except:
+                            failed_count += 1
+                            continue
+                        
+                        # Process reactions on this message
+                        for reaction in message.reactions:
+                            if str(reaction.emoji) in ['👍', '👎']:
+                                # Get all users who reacted
+                                async for user in reaction.users():
+                                    if not user.bot:  # Skip bot reactions
+                                        await leaderboard_manager.track_user_reaction(
+                                            user.id, str(message_id), str(reaction.emoji), True
+                                        )
+                                        reactions_added += 1
+                        
+                        processed_count += 1
+                        
+                        # Update progress every 20 messages
+                        if processed_count % 20 == 0:
+                            await ctx.send(f"📊 Progress: {processed_count}/{len(all_images)} messages processed, {reactions_added} reactions added, {failed_count} failed")
+                    
+                    except Exception as e:
+                        logger.error(f"Error processing message {image_data.get('message_id')}: {e}")
+                        failed_count += 1
+                        continue
+                
+                await ctx.send(f"✅ Rebuild complete!\n📊 **Results:**\n• Processed: {processed_count} messages\n• Added: {reactions_added} reactions\n• Failed: {failed_count} messages\n• Total images: {len(all_images)}")
+                
+            except Exception as e:
+                await ctx.send(f"❌ Failed to rebuild likes database: {str(e)}")
+        
+        @self.bot.hybrid_command(name='test_bookmark', description='Test bookmark functionality (Bot owners only)')
+        @commands.is_owner()
+        async def test_bookmark_cmd(ctx, message_id: str):
+            """Test bookmark functionality on a specific message"""
+            try:
+                if hasattr(ctx, 'defer'):
+                    await ctx.defer()
+                
+                leaderboard_manager = self.get_leaderboard_manager()
+                if not leaderboard_manager:
+                    await ctx.send("❌ Leaderboard manager is not available!")
+                    return
+                
+                # Try to get the message
+                try:
+                    message = await ctx.channel.fetch_message(int(message_id))
+                except:
+                    await ctx.send(f"❌ Could not find message with ID: {message_id}")
+                    return
+                
+                # Test adding bookmark
+                success = await leaderboard_manager.add_bookmark(
+                    ctx.author.id,
+                    message_id,
+                    ctx.author.display_name
+                )
+                
+                if success:
+                    await ctx.send(f"✅ Successfully bookmarked message {message_id}!")
+                    
+                    # Test checking if bookmarked
+                    is_bookmarked = await leaderboard_manager.is_bookmarked(ctx.author.id, message_id)
+                    await ctx.send(f"📌 Bookmark status: {'Found' if is_bookmarked else 'Not found'}")
+                    
+                    # Test getting bookmark count
+                    count = await leaderboard_manager.get_bookmark_count(ctx.author.id)
+                    await ctx.send(f"📊 Your total bookmarks: {count}")
+                else:
+                    await ctx.send(f"❌ Failed to bookmark message {message_id}")
+                
+            except Exception as e:
+                await ctx.send(f"❌ Error testing bookmark: {str(e)}")
+        
         
