@@ -3,9 +3,10 @@ from discord.ext import commands
 from datetime import datetime, timedelta
 import logging
 import json
+import asyncio
 from typing import Optional, Union
 from models.role_manager import RoleManager
-from views.embeds import EmbedViews
+from views.embeds import EmbedViews, PurgeConfirmationView
 from config import Config
 
 logger = logging.getLogger(__name__)
@@ -3313,5 +3314,102 @@ class CommandsController:
                 
             except Exception as e:
                 await ctx.send(f"❌ Error testing bookmark: {str(e)}")
+        
+        # PURGE COMMANDS
+        @self.bot.hybrid_command(name='purge', description='Purge messages with various filters')
+        @commands.has_permissions(manage_messages=True)
+        async def purge_cmd(ctx, filter_type: str, amount: int = 100):
+            """
+            Purge messages with different filters
+            
+            Filters:
+            - humans: Delete messages from human users only
+            - media: Delete messages with attachments/images
+            - embeds: Delete messages with embeds
+            - bots: Delete messages from bots only
+            - all: Delete all messages
+            """
+            try:
+                if hasattr(ctx, 'defer'):
+                    await ctx.defer(ephemeral=True)
+                
+                # Validate filter type
+                valid_filters = ['humans', 'media', 'embeds', 'bots', 'all']
+                if filter_type.lower() not in valid_filters:
+                    embed = discord.Embed(
+                        title="❌ Invalid Filter",
+                        description=f"Valid filters: `{', '.join(valid_filters)}`",
+                        color=0xe74c3c
+                    )
+                    await ctx.send(embed=embed, ephemeral=True)
+                    return
+                
+                # Validate amount
+                if amount < 1 or amount > 1000:
+                    embed = discord.Embed(
+                        title="❌ Invalid Amount",
+                        description="Amount must be between 1 and 1000",
+                        color=0xe74c3c
+                    )
+                    await ctx.send(embed=embed, ephemeral=True)
+                    return
+                
+                # Create filter function based on type
+                filter_func = self._get_purge_filter(filter_type.lower())
+                
+                # Send confirmation embed
+                embed = discord.Embed(
+                    title="🗑️ Purge Confirmation",
+                    description=f"**Filter:** {filter_type.title()}\n**Amount:** Up to {amount} messages\n**Channel:** {ctx.channel.mention}",
+                    color=0xf39c12
+                )
+                embed.add_field(
+                    name="⚠️ Warning",
+                    value="This action cannot be undone!",
+                    inline=False
+                )
+                embed.set_footer(text="This message will auto-delete in 30 seconds")
+                
+                # Create confirmation view
+                view = PurgeConfirmationView(ctx, filter_func, amount, filter_type)
+                message = await ctx.send(embed=embed, view=view, ephemeral=True)
+                
+                # Auto-delete after 30 seconds
+                await asyncio.sleep(30)
+                try:
+                    await message.delete()
+                except:
+                    pass
+                    
+            except Exception as e:
+                await ctx.send(f"❌ Failed to initiate purge: {str(e)}", ephemeral=True)
+        
+        def _get_purge_filter(self, filter_type: str):
+            """Get the appropriate filter function for purge type"""
+            def filter_humans(message):
+                return not message.author.bot
+            
+            def filter_media(message):
+                return (len(message.attachments) > 0 or 
+                       any(embed.image or embed.video or embed.thumbnail for embed in message.embeds))
+            
+            def filter_embeds(message):
+                return len(message.embeds) > 0
+            
+            def filter_bots(message):
+                return message.author.bot
+            
+            def filter_all(message):
+                return True
+            
+            filters = {
+                'humans': filter_humans,
+                'media': filter_media,
+                'embeds': filter_embeds,
+                'bots': filter_bots,
+                'all': filter_all
+            }
+            
+            return filters.get(filter_type, filter_all)
         
         

@@ -1,6 +1,10 @@
 import discord
 from datetime import datetime
 from typing import Optional
+import asyncio
+import logging
+
+logger = logging.getLogger(__name__)
 
 class EmbedViews:
     """Handles creation of Discord embeds"""
@@ -741,4 +745,85 @@ class EmbedViews:
         
         embed.set_footer(text=f"📊 Based on net upvotes (👍 - 👎) • Showing top 10")
         
-        return embed 
+        return embed
+
+
+class PurgeConfirmationView(discord.ui.View):
+    """Confirmation view for purge commands"""
+    
+    def __init__(self, ctx, filter_func, amount: int, filter_type: str):
+        super().__init__(timeout=30)
+        self.ctx = ctx
+        self.filter_func = filter_func
+        self.amount = amount
+        self.filter_type = filter_type
+    
+    @discord.ui.button(label="✅ Confirm Purge", style=discord.ButtonStyle.danger)
+    async def confirm_purge(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Execute the purge operation"""
+        try:
+            # Check if user has permission
+            if not interaction.user.guild_permissions.manage_messages:
+                await interaction.response.send_message("❌ You don't have permission to purge messages!", ephemeral=True)
+                return
+            
+            await interaction.response.defer(ephemeral=True)
+            
+            # Perform the purge
+            purged_messages = await self.ctx.channel.purge(
+                limit=self.amount,
+                check=self.filter_func
+            )
+            
+            # Create result embed
+            embed = discord.Embed(
+                title="✅ Purge Complete",
+                description=f"Successfully purged **{len(purged_messages)}** messages",
+                color=0x2ecc71
+            )
+            embed.add_field(name="Filter Used", value=self.filter_type.title(), inline=True)
+            embed.add_field(name="Messages Deleted", value=str(len(purged_messages)), inline=True)
+            embed.add_field(name="Channel", value=self.ctx.channel.mention, inline=True)
+            embed.set_footer(text=f"Purged by {interaction.user.display_name}")
+            
+            # Send result
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            
+            # Log the purge
+            logger.info(f"Purge executed by {interaction.user.display_name} in {self.ctx.channel.name}: {len(purged_messages)} messages deleted (filter: {self.filter_type})")
+            
+            # Disable all buttons
+            for item in self.children:
+                item.disabled = True
+            
+        except discord.Forbidden:
+            await interaction.followup.send("❌ I don't have permission to delete messages in this channel!", ephemeral=True)
+        except discord.HTTPException as e:
+            await interaction.followup.send(f"❌ Failed to purge messages: {str(e)}", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"❌ An error occurred: {str(e)}", ephemeral=True)
+            logger.error(f"Error during purge: {e}")
+    
+    @discord.ui.button(label="❌ Cancel", style=discord.ButtonStyle.secondary)
+    async def cancel_purge(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Cancel the purge operation"""
+        embed = discord.Embed(
+            title="❌ Purge Cancelled",
+            description="The purge operation has been cancelled.",
+            color=0x95a5a6
+        )
+        
+        await interaction.response.edit_message(embed=embed, view=None)
+        
+        # Disable all buttons
+        for item in self.children:
+            item.disabled = True
+    
+    async def on_timeout(self):
+        """Handle view timeout"""
+        try:
+            # Disable all buttons when timeout occurs
+            for item in self.children:
+                item.disabled = True
+        except:
+            pass 
