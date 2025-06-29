@@ -117,7 +117,12 @@ class RandomAnnouncer:
             "UCmgf8DJrAXFnU7j3u0kklUQ",  # BlueArchive_JP
             "UCdBK94H6oZT2Q7l0-b0xmMg",  # ShortCircuit
             "UChhMeymAOC5PNbbnqxD_w4g",  # JustRayen
-            "UCAn8HtI94JPEgO87tCg6dww"   # pikachubolk (Correct ID)
+            "UCAn8HtI94JPEgO87tCg6dww",  # pikachubolk
+            "UCSpFnDQr88xCZ80N-X7t0nQ",  # Corridor Crew
+            "UCT9qsTmZ0dItDHp22Pw_Ezg",  # SchizoDev
+            "UCLHmLrj4pHHg3-iBJn_CqxA",  # Neuro-sama
+            "UCtMVHI3AJD4Qk4hcbZnI9ZQ",  # SomeOrdinaryGamers
+            "UCHL9bfHTxCMi-7vfxQ-AYtg"   # Abroad In Japan
         ]
         
         # Ino personality variations for testing
@@ -515,7 +520,12 @@ Generate a short Ino announcement (10-20 words) that captures her {personality} 
             "UCmgf8DJrAXFnU7j3u0kklUQ": "Blue Archive official channel - mobile game content",
             "UCdBK94H6oZT2Q7l0-b0xmMg": "ShortCircuit tech channel - tech reviews and unboxings",
             "UChhMeymAOC5PNbbnqxD_w4g": "JustRayen - Riko's human collaborator who creates content",
-            "UCAn8HtI94JPEgO87tCg6dww": "pikachubolk - guest creator/collaborator"
+            "UCAn8HtI94JPEgO87tCg6dww": "pikachubolk - guest creator/collaborator",
+            "UCSpFnDQr88xCZ80N-X7t0nQ": "Corridor Crew - VFX artists and filmmakers",
+            "UCT9qsTmZ0dItDHp22Pw_Ezg": "SchizoDev - programming and development content",
+            "UCLHmLrj4pHHg3-iBJn_CqxA": "Neuro-sama - AI VTuber content",
+            "UCtMVHI3AJD4Qk4hcbZnI9ZQ": "SomeOrdinaryGamers - gaming and tech commentary",
+            "UCHL9bfHTxCMi-7vfxQ-AYtg": "Abroad In Japan - Japan culture and travel content"
         }
         
         context = channel_contexts.get(channel_id, "Unknown channel")
@@ -641,7 +651,12 @@ EXAMPLES:
                         "UCmgf8DJrAXFnU7j3u0kklUQ": "Blue Archive",
                         "UCdBK94H6oZT2Q7l0-b0xmMg": "ShortCircuit", 
                         "UChhMeymAOC5PNbbnqxD_w4g": "Just Rayen",
-                        "UCAn8HtI94JPEgO87tCg6dww": "pikachubolk"
+                        "UCAn8HtI94JPEgO87tCg6dww": "pikachubolk",
+                        "UCSpFnDQr88xCZ80N-X7t0nQ": "Corridor Crew",
+                        "UCT9qsTmZ0dItDHp22Pw_Ezg": "SchizoDev",
+                        "UCLHmLrj4pHHg3-iBJn_CqxA": "Neuro-sama",
+                        "UCtMVHI3AJD4Qk4hcbZnI9ZQ": "SomeOrdinaryGamers",
+                        "UCHL9bfHTxCMi-7vfxQ-AYtg": "Abroad In Japan"
                     }
                     channel_name = channel_names.get(channel_id, "Unknown Channel")
                     
