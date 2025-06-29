@@ -24,6 +24,7 @@ class MongoLeaderboardManager:
         self.nsfwban_collection = None  # New collection for NSFWBAN data
         self.warnings_collection = None  # New collection for warnings
         self.settings_collection = None  # New collection for bot settings
+        self.bookmarks_collection = None  # New collection for user bookmarks
         self._connect()
     
     def _connect(self):
@@ -38,6 +39,7 @@ class MongoLeaderboardManager:
             self.nsfwban_collection = self.db['nsfwban_users']  # New collection for NSFWBAN
             self.warnings_collection = self.db['warnings']  # New collection for warnings
             self.settings_collection = self.db['settings']  # New collection for bot settings
+            self.bookmarks_collection = self.db['bookmarks']  # New collection for user bookmarks
             
             # Create indexes for better performance
             self.collection.create_index("user_id", unique=True)
@@ -60,7 +62,12 @@ class MongoLeaderboardManager:
             # Create indexes for settings
             self.settings_collection.create_index([("guild_id", 1), ("setting_name", 1)], unique=True)
             
-            logger.info(f"Connected to MongoDB database '{self.database_name}', collections: {self.collection_name}, image_messages, nsfwban_users, warnings, settings")
+            # Create indexes for bookmarks
+            self.bookmarks_collection.create_index([("user_id", 1), ("message_id", 1)], unique=True)
+            self.bookmarks_collection.create_index([("user_id", 1), ("created_at", -1)])
+            self.bookmarks_collection.create_index([("message_id", 1)])
+            
+            logger.info(f"Connected to MongoDB database '{self.database_name}', collections: {self.collection_name}, image_messages, nsfwban_users, warnings, settings, bookmarks")
             
         except (ConnectionFailure, ServerSelectionTimeoutError) as e:
             logger.error(f"Failed to connect to MongoDB: {e}")
@@ -665,4 +672,115 @@ class MongoLeaderboardManager:
 
     async def set_warning_log_channel(self, guild_id: int, channel_id: int) -> bool:
         """Set the warning log channel for a guild"""
-        return await self.set_guild_setting(guild_id, "warning_log_channel", str(channel_id)) 
+        return await self.set_guild_setting(guild_id, "warning_log_channel", str(channel_id))
+
+    # BOOKMARK MANAGEMENT METHODS
+    async def add_bookmark(self, user_id: int, message_id: str, user_name: str = None) -> bool:
+        """Add a bookmark for a user"""
+        try:
+            # Get the image message details
+            image_data = self.images_collection.find_one({"message_id": str(message_id)})
+            if not image_data:
+                logger.warning(f"Cannot bookmark message {message_id}: Image not found in database")
+                return False
+            
+            # Create bookmark document
+            bookmark_doc = {
+                "user_id": str(user_id),
+                "message_id": str(message_id),
+                "user_name": user_name or "Unknown",
+                "image_url": image_data.get("image_url", ""),
+                "image_author": image_data.get("author_name", "Unknown"),
+                "image_content": image_data.get("content", ""),
+                "channel_id": image_data.get("channel_id", ""),
+                "jump_url": image_data.get("jump_url", ""),
+                "created_at": datetime.now(),
+                "image_created_at": image_data.get("created_at")
+            }
+            
+            # Use upsert to prevent duplicates
+            result = self.bookmarks_collection.update_one(
+                {"user_id": str(user_id), "message_id": str(message_id)},
+                {"$set": bookmark_doc},
+                upsert=True
+            )
+            
+            if result.upserted_id or result.modified_count > 0:
+                logger.info(f"Added bookmark for user {user_id}: message {message_id}")
+                return True
+            return False
+            
+        except Exception as e:
+            logger.error(f"Error adding bookmark: {e}")
+            return False
+
+    async def remove_bookmark(self, user_id: int, message_id: str) -> bool:
+        """Remove a bookmark for a user"""
+        try:
+            result = self.bookmarks_collection.delete_one({
+                "user_id": str(user_id),
+                "message_id": str(message_id)
+            })
+            
+            if result.deleted_count > 0:
+                logger.info(f"Removed bookmark for user {user_id}: message {message_id}")
+                return True
+            return False
+            
+        except Exception as e:
+            logger.error(f"Error removing bookmark: {e}")
+            return False
+
+    async def is_bookmarked(self, user_id: int, message_id: str) -> bool:
+        """Check if a message is bookmarked by a user"""
+        try:
+            result = self.bookmarks_collection.find_one({
+                "user_id": str(user_id),
+                "message_id": str(message_id)
+            })
+            return result is not None
+            
+        except Exception as e:
+            logger.error(f"Error checking bookmark status: {e}")
+            return False
+
+    async def get_user_bookmarks(self, user_id: int, limit: int = 20, skip: int = 0) -> List[Dict]:
+        """Get bookmarks for a user with pagination"""
+        try:
+            cursor = self.bookmarks_collection.find({
+                "user_id": str(user_id)
+            }).sort("created_at", -1).skip(skip).limit(limit)
+            
+            bookmarks = list(cursor)
+            logger.info(f"Retrieved {len(bookmarks)} bookmarks for user {user_id}")
+            return bookmarks
+            
+        except Exception as e:
+            logger.error(f"Error getting user bookmarks: {e}")
+            return []
+
+    async def get_bookmark_count(self, user_id: int) -> int:
+        """Get the total number of bookmarks for a user"""
+        try:
+            count = self.bookmarks_collection.count_documents({
+                "user_id": str(user_id)
+            })
+            return count
+            
+        except Exception as e:
+            logger.error(f"Error getting bookmark count: {e}")
+            return 0
+
+    async def clear_user_bookmarks(self, user_id: int) -> int:
+        """Clear all bookmarks for a user"""
+        try:
+            result = self.bookmarks_collection.delete_many({
+                "user_id": str(user_id)
+            })
+            
+            logger.info(f"Cleared {result.deleted_count} bookmarks for user {user_id}")
+            return result.deleted_count
+            
+        except Exception as e:
+            logger.error(f"Error clearing user bookmarks: {e}")
+            return 0 

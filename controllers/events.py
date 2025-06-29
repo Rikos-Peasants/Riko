@@ -172,6 +172,7 @@ class EventsController:
             try:
                 await message.add_reaction('👍')
                 await message.add_reaction('👎')
+                await message.add_reaction('🔖')  # Bookmark emoji
                 logger.info(f"Added reactions to image in {message.channel.name} by {message.author.display_name}")
                 
                 # Store the image message in MongoDB
@@ -342,7 +343,12 @@ class EventsController:
         if reaction.message.channel.id not in Config.IMAGE_REACTION_CHANNELS:
             return
         
-        # Only track thumbs up and thumbs down
+        # Handle bookmark reactions separately
+        if str(reaction.emoji) == '🔖':
+            await self._handle_bookmark_reaction(reaction, user, added)
+            return
+        
+        # Only track thumbs up and thumbs down for scoring
         if str(reaction.emoji) not in ['👍', '👎']:
             return
         
@@ -417,6 +423,84 @@ class EventsController:
             
             action = "added" if added else "removed"
             logger.info(f"Reaction {action}: {reaction.emoji} on {message.author.display_name}'s image (score change: {score_change:+d}), thumbs_up: {thumbs_up}, thumbs_down: {thumbs_down}")
+    
+    async def _handle_bookmark_reaction(self, reaction: discord.Reaction, user: discord.User, added: bool):
+        """Handle bookmark emoji reactions"""
+        try:
+            message = reaction.message
+            
+            # Check if the message has images
+            has_image = False
+            
+            # Check for attachments (uploaded images)
+            for attachment in message.attachments:
+                if any(attachment.filename.lower().endswith(ext) for ext in ['.png', '.jpg', '.jpeg', '.gif', '.webp']):
+                    has_image = True
+                    break
+            
+            # Check for embedded images (links)
+            if not has_image:
+                for embed in message.embeds:
+                    if embed.image or embed.thumbnail:
+                        has_image = True
+                        break
+            
+            if not has_image:
+                return
+            
+            if added:
+                # Add bookmark
+                success = await self.bot.leaderboard_manager.add_bookmark(
+                    user.id, 
+                    str(message.id), 
+                    user.display_name
+                )
+                
+                if success:
+                    # Send ephemeral confirmation
+                    try:
+                        embed = discord.Embed(
+                            title="🔖 Bookmark Added",
+                            description=f"Successfully bookmarked [this image]({message.jump_url})!",
+                            color=0x3498db
+                        )
+                        embed.set_footer(text="Use /bookmarks to view all your bookmarks")
+                        await user.send(embed=embed)
+                    except discord.Forbidden:
+                        # User has DMs disabled, that's okay
+                        pass
+                    
+                    logger.info(f"User {user.display_name} bookmarked message {message.id}")
+                else:
+                    # Already bookmarked or failed
+                    try:
+                        embed = discord.Embed(
+                            title="📌 Already Bookmarked",
+                            description="This image is already in your bookmarks!",
+                            color=0xf39c12
+                        )
+                        await user.send(embed=embed)
+                    except discord.Forbidden:
+                        pass
+            else:
+                # Remove bookmark
+                success = await self.bot.leaderboard_manager.remove_bookmark(user.id, str(message.id))
+                
+                if success:
+                    try:
+                        embed = discord.Embed(
+                            title="🗑️ Bookmark Removed",
+                            description="Bookmark removed successfully!",
+                            color=0xe74c3c
+                        )
+                        await user.send(embed=embed)
+                    except discord.Forbidden:
+                        pass
+                    
+                    logger.info(f"User {user.display_name} removed bookmark for message {message.id}")
+                
+        except Exception as e:
+            logger.error(f"Error handling bookmark reaction: {e}")
     
     def initialize_quest_manager(self):
         """Initialize the quest manager (called from bot.py when ready)"""

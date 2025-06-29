@@ -2850,3 +2850,179 @@ class CommandsController:
                     
             except Exception as e:
                 await ctx.send(f"❌ Failed to force check expired events: {str(e)}")
+        
+        # BOOKMARK COMMANDS
+        @self.bot.hybrid_command(name='bookmark', description='Bookmark an image message')
+        async def bookmark_cmd(ctx, message_id: str = None):
+            """Bookmark an image message by ID or reply to a message"""
+            try:
+                if hasattr(ctx, 'defer'):
+                    await ctx.defer()
+                
+                leaderboard_manager = self.get_leaderboard_manager()
+                if not leaderboard_manager:
+                    await ctx.send("❌ Leaderboard manager is not available!")
+                    return
+                
+                # Get message ID from reply or parameter
+                target_message_id = None
+                if message_id:
+                    target_message_id = message_id
+                elif ctx.message.reference and ctx.message.reference.message_id:
+                    target_message_id = str(ctx.message.reference.message_id)
+                else:
+                    await ctx.send("❌ Please provide a message ID or reply to a message to bookmark!")
+                    return
+                
+                # Check if already bookmarked
+                is_bookmarked = await leaderboard_manager.is_bookmarked(ctx.author.id, target_message_id)
+                if is_bookmarked:
+                    await ctx.send("📌 This image is already in your bookmarks!")
+                    return
+                
+                # Add bookmark
+                success = await leaderboard_manager.add_bookmark(
+                    ctx.author.id, 
+                    target_message_id, 
+                    ctx.author.display_name
+                )
+                
+                if success:
+                    await ctx.send("✅ Image bookmarked successfully! 📌")
+                else:
+                    await ctx.send("❌ Failed to bookmark image. Make sure it's a valid image message.")
+                    
+            except Exception as e:
+                await ctx.send(f"❌ Failed to bookmark image: {str(e)}")
+        
+        @self.bot.hybrid_command(name='unbookmark', description='Remove a bookmark')
+        async def unbookmark_cmd(ctx, message_id: str = None):
+            """Remove a bookmark by message ID or reply to a message"""
+            try:
+                if hasattr(ctx, 'defer'):
+                    await ctx.defer()
+                
+                leaderboard_manager = self.get_leaderboard_manager()
+                if not leaderboard_manager:
+                    await ctx.send("❌ Leaderboard manager is not available!")
+                    return
+                
+                # Get message ID from reply or parameter
+                target_message_id = None
+                if message_id:
+                    target_message_id = message_id
+                elif ctx.message.reference and ctx.message.reference.message_id:
+                    target_message_id = str(ctx.message.reference.message_id)
+                else:
+                    await ctx.send("❌ Please provide a message ID or reply to a message to unbookmark!")
+                    return
+                
+                # Remove bookmark
+                success = await leaderboard_manager.remove_bookmark(ctx.author.id, target_message_id)
+                
+                if success:
+                    await ctx.send("✅ Bookmark removed successfully! 🗑️")
+                else:
+                    await ctx.send("❌ Bookmark not found or failed to remove.")
+                    
+            except Exception as e:
+                await ctx.send(f"❌ Failed to remove bookmark: {str(e)}")
+        
+        @self.bot.hybrid_command(name='bookmarks', description='View your bookmarked images')
+        async def bookmarks_cmd(ctx, page: int = 1):
+            """View your bookmarked images with pagination"""
+            try:
+                if hasattr(ctx, 'defer'):
+                    await ctx.defer()
+                
+                leaderboard_manager = self.get_leaderboard_manager()
+                if not leaderboard_manager:
+                    await ctx.send("❌ Leaderboard manager is not available!")
+                    return
+                
+                # Get bookmark count and validate page
+                total_bookmarks = await leaderboard_manager.get_bookmark_count(ctx.author.id)
+                if total_bookmarks == 0:
+                    await ctx.send("📌 You don't have any bookmarks yet! Use `/bookmark` to save images.")
+                    return
+                
+                per_page = 5
+                max_pages = (total_bookmarks + per_page - 1) // per_page
+                page = max(1, min(page, max_pages))
+                
+                # Get bookmarks for this page
+                skip = (page - 1) * per_page
+                bookmarks = await leaderboard_manager.get_user_bookmarks(ctx.author.id, per_page, skip)
+                
+                if not bookmarks:
+                    await ctx.send("❌ No bookmarks found for this page.")
+                    return
+                
+                # Create embed
+                embed = discord.Embed(
+                    title=f"📌 {ctx.author.display_name}'s Bookmarks",
+                    description=f"Page {page}/{max_pages} • {total_bookmarks} total bookmarks",
+                    color=0x3498db
+                )
+                
+                for i, bookmark in enumerate(bookmarks, 1):
+                    bookmark_num = skip + i
+                    created_at = bookmark.get('created_at', datetime.now())
+                    if isinstance(created_at, str):
+                        created_at = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                    
+                    # Format the bookmark entry
+                    content = bookmark.get('image_content', '')[:100]
+                    if len(bookmark.get('image_content', '')) > 100:
+                        content += "..."
+                    
+                    field_value = f"**Author:** {bookmark.get('image_author', 'Unknown')}\n"
+                    if content:
+                        field_value += f"**Content:** {content}\n"
+                    field_value += f"**Saved:** <t:{int(created_at.timestamp())}:R>\n"
+                    if bookmark.get('jump_url'):
+                        field_value += f"**[Jump to Message]({bookmark['jump_url']})**"
+                    
+                    embed.add_field(
+                        name=f"{bookmark_num}. Message ID: {bookmark['message_id']}",
+                        value=field_value,
+                        inline=False
+                    )
+                
+                # Add navigation info
+                if max_pages > 1:
+                    embed.set_footer(text=f"Use /bookmarks {page+1} for next page" if page < max_pages else "This is the last page")
+                
+                await ctx.send(embed=embed)
+                
+            except Exception as e:
+                await ctx.send(f"❌ Failed to get bookmarks: {str(e)}")
+        
+        @self.bot.hybrid_command(name='clear_bookmarks', description='Clear all your bookmarks')
+        async def clear_bookmarks_cmd(ctx):
+            """Clear all bookmarks for the user"""
+            try:
+                if hasattr(ctx, 'defer'):
+                    await ctx.defer()
+                
+                leaderboard_manager = self.get_leaderboard_manager()
+                if not leaderboard_manager:
+                    await ctx.send("❌ Leaderboard manager is not available!")
+                    return
+                
+                # Get current count
+                count = await leaderboard_manager.get_bookmark_count(ctx.author.id)
+                if count == 0:
+                    await ctx.send("📌 You don't have any bookmarks to clear!")
+                    return
+                
+                # Clear bookmarks
+                cleared_count = await leaderboard_manager.clear_user_bookmarks(ctx.author.id)
+                
+                if cleared_count > 0:
+                    await ctx.send(f"✅ Cleared {cleared_count} bookmarks successfully! 🗑️")
+                else:
+                    await ctx.send("❌ Failed to clear bookmarks.")
+                    
+            except Exception as e:
+                await ctx.send(f"❌ Failed to clear bookmarks: {str(e)}")
