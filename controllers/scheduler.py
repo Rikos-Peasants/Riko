@@ -72,9 +72,11 @@ class SchedulerController:
         """Post the best image of the week every Sunday"""
         try:
             now = datetime.now()
-            # Check if it's Sunday (weekday 6)
-            if now.weekday() == 6:  # Sunday
-                logger.info("Starting weekly best image selection...")
+            logger.debug(f"Weekly best image task check: {now.strftime('%A %Y-%m-%d %H:%M')} (weekday: {now.weekday()}, hour: {now.hour})")
+            
+            # Check if it's Sunday (weekday 6) AND it's around midnight to avoid running multiple times
+            if now.weekday() == 6 and now.hour == 0:  # Sunday at midnight
+                logger.info("✅ Starting weekly best image selection...")
                 
                 # Get the date range for the PREVIOUS complete week (Monday to Sunday)
                 # Sunday is the end of the week, so we want last Monday to last Sunday
@@ -84,6 +86,8 @@ class SchedulerController:
                 logger.info(f"Looking for best images from {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
                 
                 await self._post_best_image("week", start_date, end_date)
+            else:
+                logger.debug(f"⏭️ Skipping weekly best image - not Sunday at midnight (current: {now.strftime('%A %H:%M')})")
                 
         except Exception as e:
             logger.error(f"Error in weekly best image task: {e}")
@@ -93,8 +97,8 @@ class SchedulerController:
         """Post the best image of the month on the first day of each month"""
         try:
             now = datetime.now()
-            # Check if it's the first day of the month
-            if now.day == 1:
+            # Check if it's the first day of the month AND it's around midnight
+            if now.day == 1 and now.hour == 0:
                 logger.info("Starting monthly best image selection...")
                 
                 # Get the date range for the PREVIOUS complete month
@@ -118,8 +122,8 @@ class SchedulerController:
         """Post the best image of the year on the first day of January"""
         try:
             now = datetime.now()
-            # Check if it's the first day of January
-            if now.month == 1 and now.day == 1:
+            # Check if it's the first day of January AND it's around midnight
+            if now.month == 1 and now.day == 1 and now.hour == 0:
                 logger.info("Starting yearly best image selection...")
                 
                 # Get the date range for the PREVIOUS complete year
@@ -281,11 +285,17 @@ class SchedulerController:
     async def before_weekly_task(self):
         """Wait until the bot is ready before starting weekly task"""
         await self.bot.wait_until_ready()
+        # Add a small delay to prevent immediate execution on startup
+        import asyncio
+        await asyncio.sleep(60)  # Wait 1 minute after bot is ready
     
     @monthly_best_image.before_loop
     async def before_monthly_task(self):
         """Wait until the bot is ready before starting monthly task"""
         await self.bot.wait_until_ready()
+        # Add a small delay to prevent immediate execution on startup
+        import asyncio
+        await asyncio.sleep(60)  # Wait 1 minute after bot is ready
     
     @tasks.loop(hours=1)  # Check every hour
     async def check_expired_events(self):
@@ -339,6 +349,9 @@ class SchedulerController:
     async def before_yearly_task(self):
         """Wait until the bot is ready before starting yearly task"""
         await self.bot.wait_until_ready()
+        # Add a small delay to prevent immediate execution on startup
+        import asyncio
+        await asyncio.sleep(60)  # Wait 1 minute after bot is ready
     
     @check_expired_events.before_loop
     async def before_expired_events_task(self):
