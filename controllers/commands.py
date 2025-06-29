@@ -3360,7 +3360,7 @@ class CommandsController:
         @purge_group.command(name='all', description='Delete all messages')
         async def purge_all_cmd(ctx, amount: int = 100):
             """Delete all messages regardless of type"""
-                        await self._execute_purge(ctx, lambda msg: True, amount, "all")
+            await self._execute_purge(ctx, lambda msg: True, amount, "all")
     
     async def _execute_purge(self, ctx, filter_func, amount: int, filter_type: str):
         """Execute purge with the given filter"""
