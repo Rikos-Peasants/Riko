@@ -8,7 +8,7 @@ from config import Config
 
 if TYPE_CHECKING:
     from controllers.events import EventsController
-    from controllers.commands import CommandsController  
+    from controllers.commands import CommandsController
     from controllers.scheduler import SchedulerController
     from models.youtube_monitor import YouTubeMonitor
 
@@ -76,7 +76,8 @@ class RikoBot(commands.Bot):
                 self.youtube_monitor = YouTubeMonitor(self.leaderboard_manager)
             else:
                 self.youtube_monitor = YouTubeMonitor(None)
-            # The YouTubeMonitor will set its own bot reference when needed
+            # Set bot reference for Discord operations
+            self.youtube_monitor.bot = self
             logger.info("✅ YouTube monitor initialized successfully")
         except Exception as e:
             logger.error(f"❌ Failed to initialize YouTube monitor: {e}")
@@ -98,7 +99,7 @@ class RikoBot(commands.Bot):
         self.events_controller = EventsController(self)
         self.commands_controller = CommandsController(self)
         self.scheduler_controller = SchedulerController(self)
-        
+    
     async def setup_hook(self):
         """Initial setup when bot is starting"""
         logger.info("Setting up bot...")
@@ -187,7 +188,7 @@ class RikoBot(commands.Bot):
     async def before_cycle_status(self):
         """Wait for bot to be ready before starting status cycling"""
         await self.wait_until_ready()
-    
+
     async def close(self):
         """Clean shutdown"""
         logger.info("Bot is shutting down...")

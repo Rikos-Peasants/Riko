@@ -745,7 +745,7 @@ class EmbedViews:
         
         embed.set_footer(text=f"📊 Based on net upvotes (👍 - 👎) • Showing top 10")
         
-        return embed
+        return embed 
 
 
 class PurgeConfirmationView(discord.ui.View):

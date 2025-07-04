@@ -679,7 +679,7 @@ class MongoLeaderboardManager:
 
     async def set_warning_log_channel(self, guild_id: int, channel_id: int) -> bool:
         """Set the warning log channel for a guild"""
-        return await self.set_guild_setting(guild_id, "warning_log_channel", str(channel_id))
+        return await self.set_guild_setting(guild_id, "warning_log_channel", str(channel_id)) 
 
     # BOOKMARK MANAGEMENT METHODS
     async def add_bookmark(self, user_id: int, message_id: str, user_name: str = None) -> bool:
