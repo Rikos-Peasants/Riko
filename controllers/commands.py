@@ -935,8 +935,8 @@ class CommandsController:
                     guild_id=ctx.guild.id,
                     user_id=user.id,
                     user_name=user.display_name,
-                    warned_by_id=ctx.author.id,
-                    warned_by_name=ctx.author.display_name,
+                    moderator_id=ctx.author.id,
+                    moderator_name=ctx.author.display_name,
                     reason=reason
                 )
                 
@@ -2854,7 +2854,7 @@ class CommandsController:
         
         # BOOKMARK COMMANDS
         @self.bot.hybrid_command(name='bookmark', description='Bookmark an image message')
-        async def bookmark_cmd(ctx, message_id: str = None):
+        async def bookmark_cmd(ctx, message_id: Optional[str] = None):
             """Bookmark an image message by ID or reply to a message"""
             try:
                 if hasattr(ctx, 'defer'):
@@ -2897,7 +2897,7 @@ class CommandsController:
                 await ctx.send(f"❌ Failed to bookmark image: {str(e)}")
         
         @self.bot.hybrid_command(name='unbookmark', description='Remove a bookmark')
-        async def unbookmark_cmd(ctx, message_id: str = None):
+        async def unbookmark_cmd(ctx, message_id: Optional[str] = None):
             """Remove a bookmark by message ID or reply to a message"""
             try:
                 if hasattr(ctx, 'defer'):
@@ -3029,7 +3029,7 @@ class CommandsController:
                 await ctx.send(f"❌ Failed to clear bookmarks: {str(e)}")
         
         @self.bot.hybrid_command(name='liked_images', description='View images you or another user has liked')
-        async def liked_images_cmd(ctx, user: discord.Member = None, page: int = 1):
+        async def liked_images_cmd(ctx, user: Optional[discord.Member] = None, page: int = 1):
             """View images that a user has liked with pagination"""
             try:
                 if hasattr(ctx, 'defer'):
@@ -3150,6 +3150,10 @@ class CommandsController:
                             if not channel:
                                 continue
                             
+                            # Check if channel supports fetch_message
+                            if not hasattr(channel, 'fetch_message'):
+                                continue
+                            
                             message = await channel.fetch_message(int(message_id))
                             if not message:
                                 continue
@@ -3234,6 +3238,11 @@ class CommandsController:
                         try:
                             channel = self.bot.get_channel(int(channel_id))
                             if not channel:
+                                failed_count += 1
+                                continue
+                            
+                            # Check if channel supports fetch_message
+                            if not hasattr(channel, 'fetch_message'):
                                 failed_count += 1
                                 continue
                             
