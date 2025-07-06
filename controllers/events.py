@@ -88,6 +88,33 @@ class EventsController:
         except Exception as e:
             logger.error(f"Error handling member join for NSFWBAN reapplication: {e}")
     
+    async def _handle_member_join_message(self, message: discord.Message):
+        """Handle Discord system messages for member joins and reply with sticker"""
+        try:
+            # Check if this is a system message for member join
+            if message.type == discord.MessageType.new_member:
+                # Get the sticker by ID from the guild
+                sticker_id = 1391462726781505536
+                
+                # Try to get the sticker from the guild first
+                sticker = None
+                if message.guild:
+                    sticker = discord.utils.get(message.guild.stickers, id=sticker_id)
+                
+                if sticker:
+                    # Send the sticker as a reply to the member join message
+                    await message.reply(stickers=[sticker])
+                    logger.info(f"Sent welcome sticker for member join message in #{getattr(message.channel, 'name', 'DM')}")
+                else:
+                    logger.warning(f"Could not find guild sticker with ID {sticker_id}")
+                    
+        except discord.Forbidden:
+            logger.error("Missing permission to send sticker messages for member joins")
+        except discord.HTTPException as e:
+            logger.error(f"HTTP error sending sticker for member join message: {e}")
+        except Exception as e:
+            logger.error(f"Error handling member join message: {e}")
+    
     async def _handle_member_update(self, before: discord.Member, after: discord.Member):
         """Handle member role updates"""
         # Only process events from the configured guild
@@ -121,8 +148,12 @@ class EventsController:
                     print(f"Error handling role update for {after.display_name}: {e}")
     
     async def _handle_message(self, message: discord.Message):
-        """Handle new messages for image reactions"""
-        # Ignore bot messages
+        """Handle new messages for image reactions and member join stickers"""
+        # Check for member join system messages FIRST (before ignoring bot messages)
+        if message.guild and message.guild.id == Config.GUILD_ID:
+            await self._handle_member_join_message(message)
+        
+        # Ignore bot messages for regular processing
         if message.author.bot:
             return
         
