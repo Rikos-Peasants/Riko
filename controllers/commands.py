@@ -3370,6 +3370,324 @@ class CommandsController:
         async def purge_all_cmd(ctx, amount: int = 100):
             """Delete all messages regardless of type"""
             await self._execute_purge(ctx, lambda msg: True, amount, "all")
+
+        # WELCOME/LEAVE SYSTEM COMMANDS
+        @self.bot.hybrid_group(name='greet', description='Manage welcome and leave messages')
+        @commands.has_permissions(manage_guild=True)
+        async def greet_group(ctx):
+            """Welcome and leave message management commands"""
+            if ctx.invoked_subcommand is None:
+                embed = discord.Embed(
+                    title="🎉 Welcome/Leave System",
+                    description="Manage welcome and leave messages for your server",
+                    color=0x3498db
+                )
+                embed.add_field(
+                    name="📝 Setup Commands",
+                    value=(
+                        "`/greet welcome channel:#channel` - Set welcome channel\n"
+                        "`/greet leave channel:#channel` - Set leave channel\n"
+                        "`/greet disable type:welcome` - Disable welcome messages\n"
+                        "`/greet disable type:leave` - Disable leave messages\n"
+                        "`/greet embed type:greet json:{...}` - Set custom welcome message"
+                    ),
+                    inline=False
+                )
+                embed.add_field(
+                    name="🔧 Placeholders",
+                    value=(
+                        "`{usermention}` - @User mention\n"
+                        "`{displayname}` - User display name\n"
+                        "`{username}` - User username\n"
+                        "`{membercount}` - Server member count\n"
+                        "`{useravatar}` - User avatar URL\n"
+                        "`{userurl}` - User profile URL"
+                    ),
+                    inline=False
+                )
+                await ctx.send(embed=embed, ephemeral=True)
+
+        @greet_group.command(name='welcome', description='Set the welcome channel')
+        async def greet_welcome_cmd(ctx, channel: discord.TextChannel):
+            """Set the welcome channel for the server"""
+            try:
+                if hasattr(ctx, 'defer'):
+                    await ctx.defer()
+                
+                # Validate guild
+                if not ctx.guild or ctx.guild.id != Config.GUILD_ID:
+                    error_msg = "This command can only be used in the configured guild."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Get leaderboard manager
+                leaderboard_manager = self.get_leaderboard_manager()
+                if not leaderboard_manager:
+                    error_msg = "Database manager is not available."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Set welcome channel
+                success = await leaderboard_manager.set_welcome_channel(ctx.guild.id, channel.id)
+                if success:
+                    # Enable welcome system
+                    await leaderboard_manager.enable_welcome_system(ctx.guild.id)
+                    
+                    embed = discord.Embed(
+                        title="✅ Welcome Channel Set",
+                        description=f"Welcome messages will now be sent to {channel.mention}",
+                        color=0x2ecc71
+                    )
+                    embed.set_footer(text="Use /greet embed to customize the welcome message")
+                else:
+                    embed = discord.Embed(
+                        title="❌ Error",
+                        description="Failed to set welcome channel. Please try again.",
+                        color=0xe74c3c
+                    )
+                
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(embed=embed)
+                else:
+                    await ctx.send(embed=embed)
+                    
+            except Exception as e:
+                error_embed = discord.Embed(
+                    title="❌ Error",
+                    description=f"Failed to set welcome channel: {str(e)}",
+                    color=0xe74c3c
+                )
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(embed=error_embed, ephemeral=True)
+                else:
+                    await ctx.send(embed=error_embed)
+
+        @greet_group.command(name='leave', description='Set the leave channel')
+        async def greet_leave_cmd(ctx, channel: discord.TextChannel):
+            """Set the leave channel for the server"""
+            try:
+                if hasattr(ctx, 'defer'):
+                    await ctx.defer()
+                
+                # Validate guild
+                if not ctx.guild or ctx.guild.id != Config.GUILD_ID:
+                    error_msg = "This command can only be used in the configured guild."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Get leaderboard manager
+                leaderboard_manager = self.get_leaderboard_manager()
+                if not leaderboard_manager:
+                    error_msg = "Database manager is not available."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Set leave channel
+                success = await leaderboard_manager.set_leave_channel(ctx.guild.id, channel.id)
+                if success:
+                    # Enable leave system
+                    await leaderboard_manager.enable_leave_system(ctx.guild.id)
+                    
+                    embed = discord.Embed(
+                        title="✅ Leave Channel Set",
+                        description=f"Leave messages will now be sent to {channel.mention}",
+                        color=0x2ecc71
+                    )
+                    embed.set_footer(text="Use /greet embed to customize the leave message")
+                else:
+                    embed = discord.Embed(
+                        title="❌ Error",
+                        description="Failed to set leave channel. Please try again.",
+                        color=0xe74c3c
+                    )
+                
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(embed=embed)
+                else:
+                    await ctx.send(embed=embed)
+                    
+            except Exception as e:
+                error_embed = discord.Embed(
+                    title="❌ Error",
+                    description=f"Failed to set leave channel: {str(e)}",
+                    color=0xe74c3c
+                )
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(embed=error_embed, ephemeral=True)
+                else:
+                    await ctx.send(embed=error_embed)
+
+        @greet_group.command(name='disable', description='Disable welcome or leave messages')
+        async def greet_disable_cmd(ctx, type: str):
+            """Disable welcome or leave messages"""
+            try:
+                if hasattr(ctx, 'defer'):
+                    await ctx.defer()
+                
+                # Validate guild
+                if not ctx.guild or ctx.guild.id != Config.GUILD_ID:
+                    error_msg = "This command can only be used in the configured guild."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Validate type
+                if type.lower() not in ['welcome', 'leave']:
+                    error_msg = "Type must be either 'welcome' or 'leave'."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Get leaderboard manager
+                leaderboard_manager = self.get_leaderboard_manager()
+                if not leaderboard_manager:
+                    error_msg = "Database manager is not available."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Disable the specified system
+                if type.lower() == 'welcome':
+                    success = await leaderboard_manager.disable_welcome_system(ctx.guild.id)
+                    system_name = "Welcome"
+                else:
+                    success = await leaderboard_manager.disable_leave_system(ctx.guild.id)
+                    system_name = "Leave"
+                
+                if success:
+                    embed = discord.Embed(
+                        title="✅ System Disabled",
+                        description=f"{system_name} messages have been disabled.",
+                        color=0x2ecc71
+                    )
+                else:
+                    embed = discord.Embed(
+                        title="❌ Error",
+                        description=f"Failed to disable {system_name.lower()} messages. Please try again.",
+                        color=0xe74c3c
+                    )
+                
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(embed=embed)
+                else:
+                    await ctx.send(embed=embed)
+                    
+            except Exception as e:
+                error_embed = discord.Embed(
+                    title="❌ Error",
+                    description=f"Failed to disable system: {str(e)}",
+                    color=0xe74c3c
+                )
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(embed=error_embed, ephemeral=True)
+                else:
+                    await ctx.send(embed=error_embed)
+
+        @greet_group.command(name='embed', description='Set custom welcome or leave message')
+        async def greet_embed_cmd(ctx, type: str, *, json_data: str):
+            """Set custom welcome or leave message using JSON"""
+            try:
+                if hasattr(ctx, 'defer'):
+                    await ctx.defer()
+                
+                # Validate guild
+                if not ctx.guild or ctx.guild.id != Config.GUILD_ID:
+                    error_msg = "This command can only be used in the configured guild."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Validate type
+                if type.lower() not in ['welcome', 'leave', 'greet']:
+                    error_msg = "Type must be either 'welcome', 'leave', or 'greet'."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Parse JSON
+                try:
+                    message_data = json.loads(json_data)
+                except json.JSONDecodeError as e:
+                    error_msg = f"Invalid JSON format: {str(e)}"
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Get leaderboard manager
+                leaderboard_manager = self.get_leaderboard_manager()
+                if not leaderboard_manager:
+                    error_msg = "Database manager is not available."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Set the message
+                if type.lower() in ['welcome', 'greet']:
+                    success = await leaderboard_manager.set_welcome_message(ctx.guild.id, message_data)
+                    system_name = "Welcome"
+                else:
+                    success = await leaderboard_manager.set_leave_message(ctx.guild.id, message_data)
+                    system_name = "Leave"
+                
+                if success:
+                    embed = discord.Embed(
+                        title="✅ Message Set",
+                        description=f"{system_name} message has been updated successfully!",
+                        color=0x2ecc71
+                    )
+                    embed.add_field(
+                        name="📝 Preview",
+                        value="The message will use the placeholders you defined.",
+                        inline=False
+                    )
+                else:
+                    embed = discord.Embed(
+                        title="❌ Error",
+                        description=f"Failed to set {system_name.lower()} message. Please try again.",
+                        color=0xe74c3c
+                    )
+                
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(embed=embed)
+                else:
+                    await ctx.send(embed=embed)
+                    
+            except Exception as e:
+                error_embed = discord.Embed(
+                    title="❌ Error",
+                    description=f"Failed to set message: {str(e)}",
+                    color=0xe74c3c
+                )
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(embed=error_embed, ephemeral=True)
+                else:
+                    await ctx.send(embed=error_embed)
     
     async def _execute_purge(self, ctx, filter_func, amount: int, filter_type: str):
         """Execute purge with the given filter"""

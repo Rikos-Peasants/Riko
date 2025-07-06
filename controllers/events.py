@@ -24,6 +24,10 @@ class EventsController:
             await self._handle_member_join(member)
         
         @self.bot.event
+        async def on_member_remove(member: discord.Member):
+            await self._handle_member_leave(member)
+        
+        @self.bot.event
         async def on_member_update(before: discord.Member, after: discord.Member):
             await self._handle_member_update(before, after)
         
@@ -53,7 +57,7 @@ class EventsController:
             await self._handle_reaction_change(reaction, user, added=False)
     
     async def _handle_member_join(self, member: discord.Member):
-        """Handle member join events to reapply NSFWBAN role if needed"""
+        """Handle member join events to reapply NSFWBAN role if needed and send welcome message"""
         # Only process events from the configured guild
         if member.guild.id != Config.GUILD_ID:
             return
@@ -84,9 +88,215 @@ class EventsController:
                         logger.error(f"Failed to send NSFWBAN rejoin DM to {member.display_name}: {e}")
                 else:
                     logger.error(f"NSFWBAN role not found when trying to reapply to {member.display_name}")
+            
+            # Send welcome message if enabled
+            await self._send_welcome_message(member)
                     
         except Exception as e:
             logger.error(f"Error handling member join for NSFWBAN reapplication: {e}")
+    
+    async def _handle_member_leave(self, member: discord.Member):
+        """Handle member leave events and send leave message"""
+        # Only process events from the configured guild
+        if member.guild.id != Config.GUILD_ID:
+            return
+        
+        try:
+            # Send leave message if enabled
+            await self._send_leave_message(member)
+        except Exception as e:
+            logger.error(f"Error handling member leave: {e}")
+    
+    async def _send_welcome_message(self, member: discord.Member):
+        """Send welcome message to configured channel"""
+        try:
+            # Check if welcome system is enabled
+            if not await self.bot.leaderboard_manager.is_welcome_enabled(member.guild.id):
+                return
+            
+            # Get welcome channel
+            welcome_channel_id = await self.bot.leaderboard_manager.get_welcome_channel(member.guild.id)
+            if not welcome_channel_id:
+                return
+            
+            welcome_channel = member.guild.get_channel(welcome_channel_id)
+            if not welcome_channel:
+                logger.warning(f"Welcome channel {welcome_channel_id} not found")
+                return
+            
+            # Get welcome message template
+            welcome_message_data = await self.bot.leaderboard_manager.get_welcome_message(member.guild.id)
+            if not welcome_message_data:
+                # Default welcome message
+                welcome_message_data = {
+                    "content": "Welcome {usermention}! 🎉"
+                }
+            
+            # Process message with placeholders
+            processed_message = await self._process_welcome_leave_message(welcome_message_data, member, "welcome")
+            
+            # Send the message
+            await welcome_channel.send(**processed_message)
+            logger.info(f"Sent welcome message for {member.display_name} in #{welcome_channel.name}")
+            
+        except Exception as e:
+            logger.error(f"Error sending welcome message: {e}")
+    
+    async def _send_leave_message(self, member: discord.Member):
+        """Send leave message to configured channel"""
+        try:
+            # Check if leave system is enabled
+            if not await self.bot.leaderboard_manager.is_leave_enabled(member.guild.id):
+                return
+            
+            # Get leave channel
+            leave_channel_id = await self.bot.leaderboard_manager.get_leave_channel(member.guild.id)
+            if not leave_channel_id:
+                return
+            
+            leave_channel = member.guild.get_channel(leave_channel_id)
+            if not leave_channel:
+                logger.warning(f"Leave channel {leave_channel_id} not found")
+                return
+            
+            # Get leave message template
+            leave_message_data = await self.bot.leaderboard_manager.get_leave_message(member.guild.id)
+            if not leave_message_data:
+                # Default leave message
+                leave_message_data = {
+                    "content": "Goodbye {displayname}! 👋"
+                }
+            
+            # Process message with placeholders
+            processed_message = await self._process_welcome_leave_message(leave_message_data, member, "leave")
+            
+            # Send the message
+            await leave_channel.send(**processed_message)
+            logger.info(f"Sent leave message for {member.display_name} in #{leave_channel.name}")
+            
+        except Exception as e:
+            logger.error(f"Error sending leave message: {e}")
+    
+    async def _process_welcome_leave_message(self, message_data: dict, member: discord.Member, message_type: str) -> dict:
+        """Process welcome/leave message with placeholders"""
+        import copy
+        processed_data = copy.deepcopy(message_data)
+        
+        # Define placeholders
+        placeholders = {
+            "{usermention}": member.mention,
+            "{displayname}": member.display_name,
+            "{username}": member.name,
+            "{userid}": str(member.id),
+            "{userurl}": f"https://discord.com/users/{member.id}",
+            "{useravatar}": str(member.display_avatar.url) if member.display_avatar else "",
+            "{membercount}": str(member.guild.member_count),
+            "{guildname}": member.guild.name,
+            "{guildid}": str(member.guild.id)
+        }
+        
+        def replace_placeholders(text):
+            """Replace placeholders in text"""
+            if not isinstance(text, str):
+                return text
+            for placeholder, value in placeholders.items():
+                text = text.replace(placeholder, value)
+            return text
+        
+        # Process content
+        if "content" in processed_data:
+            processed_data["content"] = replace_placeholders(processed_data["content"])
+        
+        # Process embeds
+        if "embeds" in processed_data:
+            for embed_data in processed_data["embeds"]:
+                # Process embed fields
+                for field_name in ["title", "description"]:
+                    if field_name in embed_data:
+                        embed_data[field_name] = replace_placeholders(embed_data[field_name])
+                
+                # Process embed author
+                if "author" in embed_data:
+                    for author_field in ["name", "url", "icon_url"]:
+                        if author_field in embed_data["author"]:
+                            embed_data["author"][author_field] = replace_placeholders(embed_data["author"][author_field])
+                
+                # Process embed footer
+                if "footer" in embed_data:
+                    for footer_field in ["text", "icon_url"]:
+                        if footer_field in embed_data["footer"]:
+                            embed_data["footer"][footer_field] = replace_placeholders(embed_data["footer"][footer_field])
+                
+                # Process embed fields
+                if "fields" in embed_data:
+                    for field in embed_data["fields"]:
+                        if "name" in field:
+                            field["name"] = replace_placeholders(field["name"])
+                        if "value" in field:
+                            field["value"] = replace_placeholders(field["value"])
+                
+                # Process embed image and thumbnail
+                for image_field in ["image", "thumbnail"]:
+                    if image_field in embed_data and "url" in embed_data[image_field]:
+                        embed_data[image_field]["url"] = replace_placeholders(embed_data[image_field]["url"])
+            
+            # Convert embed data to discord.Embed objects
+            embeds = []
+            for embed_data in processed_data["embeds"]:
+                embed = discord.Embed()
+                
+                # Set basic embed properties
+                if "title" in embed_data:
+                    embed.title = embed_data["title"]
+                if "description" in embed_data:
+                    embed.description = embed_data["description"]
+                if "color" in embed_data:
+                    embed.color = embed_data["color"]
+                if "url" in embed_data:
+                    embed.url = embed_data["url"]
+                if "timestamp" in embed_data:
+                    embed.timestamp = embed_data["timestamp"]
+                
+                # Set embed author
+                if "author" in embed_data:
+                    author = embed_data["author"]
+                    author_kwargs = {"name": author.get("name", "")}
+                    if "url" in author and author["url"]:
+                        author_kwargs["url"] = author["url"]
+                    if "icon_url" in author and author["icon_url"]:
+                        author_kwargs["icon_url"] = author["icon_url"]
+                    embed.set_author(**author_kwargs)
+                
+                # Set embed footer
+                if "footer" in embed_data:
+                    footer = embed_data["footer"]
+                    footer_kwargs = {"text": footer.get("text", "")}
+                    if "icon_url" in footer and footer["icon_url"]:
+                        footer_kwargs["icon_url"] = footer["icon_url"]
+                    embed.set_footer(**footer_kwargs)
+                
+                # Add embed fields
+                if "fields" in embed_data:
+                    for field in embed_data["fields"]:
+                        embed.add_field(
+                            name=field.get("name", ""),
+                            value=field.get("value", ""),
+                            inline=field.get("inline", False)
+                        )
+                
+                # Set embed image
+                if "image" in embed_data and "url" in embed_data["image"]:
+                    embed.set_image(url=embed_data["image"]["url"])
+                
+                # Set embed thumbnail
+                if "thumbnail" in embed_data and "url" in embed_data["thumbnail"]:
+                    embed.set_thumbnail(url=embed_data["thumbnail"]["url"])
+                
+                embeds.append(embed)
+            
+            processed_data["embeds"] = embeds
+        
+        return processed_data
     
     async def _handle_member_join_message(self, message: discord.Message):
         """Handle Discord system messages for member joins and reply with sticker"""

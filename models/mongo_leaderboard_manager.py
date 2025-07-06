@@ -868,3 +868,120 @@ class MongoLeaderboardManager:
         except Exception as e:
             logger.error(f"Error getting user liked images count: {e}")
             return 0 
+
+    # WELCOME/LEAVE SYSTEM METHODS
+    async def set_welcome_channel(self, guild_id: int, channel_id: int) -> bool:
+        """Set the welcome channel for a guild"""
+        try:
+            return await self.set_guild_setting(guild_id, "welcome_channel", channel_id)
+        except Exception as e:
+            logger.error(f"Error setting welcome channel: {e}")
+            return False
+
+    async def set_leave_channel(self, guild_id: int, channel_id: int) -> bool:
+        """Set the leave channel for a guild"""
+        try:
+            return await self.set_guild_setting(guild_id, "leave_channel", channel_id)
+        except Exception as e:
+            logger.error(f"Error setting leave channel: {e}")
+            return False
+
+    async def get_welcome_channel(self, guild_id: int) -> Optional[int]:
+        """Get the welcome channel for a guild"""
+        try:
+            channel_id = await self.get_guild_setting(guild_id, "welcome_channel")
+            return int(channel_id) if channel_id else None
+        except Exception as e:
+            logger.error(f"Error getting welcome channel: {e}")
+            return None
+
+    async def get_leave_channel(self, guild_id: int) -> Optional[int]:
+        """Get the leave channel for a guild"""
+        try:
+            channel_id = await self.get_guild_setting(guild_id, "leave_channel")
+            return int(channel_id) if channel_id else None
+        except Exception as e:
+            logger.error(f"Error getting leave channel: {e}")
+            return None
+
+    async def disable_welcome_system(self, guild_id: int) -> bool:
+        """Disable the welcome system for a guild"""
+        try:
+            return await self.set_guild_setting(guild_id, "welcome_enabled", False)
+        except Exception as e:
+            logger.error(f"Error disabling welcome system: {e}")
+            return False
+
+    async def disable_leave_system(self, guild_id: int) -> bool:
+        """Disable the leave system for a guild"""
+        try:
+            return await self.set_guild_setting(guild_id, "leave_enabled", False)
+        except Exception as e:
+            logger.error(f"Error disabling leave system: {e}")
+            return False
+
+    async def enable_welcome_system(self, guild_id: int) -> bool:
+        """Enable the welcome system for a guild"""
+        try:
+            return await self.set_guild_setting(guild_id, "welcome_enabled", True)
+        except Exception as e:
+            logger.error(f"Error enabling welcome system: {e}")
+            return False
+
+    async def enable_leave_system(self, guild_id: int) -> bool:
+        """Enable the leave system for a guild"""
+        try:
+            return await self.set_guild_setting(guild_id, "leave_enabled", True)
+        except Exception as e:
+            logger.error(f"Error enabling leave system: {e}")
+            return False
+
+    async def is_welcome_enabled(self, guild_id: int) -> bool:
+        """Check if welcome system is enabled for a guild"""
+        try:
+            enabled = await self.get_guild_setting(guild_id, "welcome_enabled", True)  # Default to True
+            return bool(enabled)
+        except Exception as e:
+            logger.error(f"Error checking welcome system status: {e}")
+            return True
+
+    async def is_leave_enabled(self, guild_id: int) -> bool:
+        """Check if leave system is enabled for a guild"""
+        try:
+            enabled = await self.get_guild_setting(guild_id, "leave_enabled", True)  # Default to True
+            return bool(enabled)
+        except Exception as e:
+            logger.error(f"Error checking leave system status: {e}")
+            return True
+
+    async def set_welcome_message(self, guild_id: int, message_data: Dict) -> bool:
+        """Set the welcome message template for a guild"""
+        try:
+            return await self.set_guild_setting(guild_id, "welcome_message", message_data)
+        except Exception as e:
+            logger.error(f"Error setting welcome message: {e}")
+            return False
+
+    async def set_leave_message(self, guild_id: int, message_data: Dict) -> bool:
+        """Set the leave message template for a guild"""
+        try:
+            return await self.set_guild_setting(guild_id, "leave_message", message_data)
+        except Exception as e:
+            logger.error(f"Error setting leave message: {e}")
+            return False
+
+    async def get_welcome_message(self, guild_id: int) -> Optional[Dict]:
+        """Get the welcome message template for a guild"""
+        try:
+            return await self.get_guild_setting(guild_id, "welcome_message")
+        except Exception as e:
+            logger.error(f"Error getting welcome message: {e}")
+            return None
+
+    async def get_leave_message(self, guild_id: int) -> Optional[Dict]:
+        """Get the leave message template for a guild"""
+        try:
+            return await self.get_guild_setting(guild_id, "leave_message")
+        except Exception as e:
+            logger.error(f"Error getting leave message: {e}")
+            return None
