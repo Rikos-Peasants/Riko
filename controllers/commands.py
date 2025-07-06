@@ -3602,7 +3602,7 @@ class CommandsController:
                     await ctx.send(embed=error_embed)
 
         @greet_group.command(name='embed', description='Set custom welcome or leave message')
-        async def greet_embed_cmd(ctx, *, raw_input: str):
+        async def greet_embed_cmd(ctx, type: str, *, json_data: str):
             """Set custom welcome or leave message using JSON"""
             try:
                 if hasattr(ctx, 'defer'):
@@ -3617,63 +3617,8 @@ class CommandsController:
                         await ctx.send(error_msg)
                     return
                 
-                # Smart parsing to handle both formats:
-                # Format 1: type:greet {"content": "..."}
-                # Format 2: type: greet json_data: {"content": "..."}
-                
-                # Extract type and JSON data
-                type_str = None
-                json_data = None
-                
-                # Try to parse different formats
-                if 'type:' in raw_input:
-                    # Handle both formats:
-                    # Format 1: type:greet {"content": "..."}
-                    # Format 2: type: greet json_data: {"content": "..."}
-                    
-                    if 'json_data:' in raw_input:
-                        # Format 2: type: greet json_data: {"content": "..."}
-                        # Extract type between "type:" and "json_data:"
-                        type_match = raw_input.split('type:')[1].split('json_data:')[0].strip()
-                        type_str = type_match
-                        # Extract JSON after "json_data:"
-                        json_data = raw_input.split('json_data:')[1].strip()
-                    else:
-                        # Format 1: type:greet {"content": "..."}
-                        # Or Format 2 without json_data prefix: type: greet {"content": "..."}
-                        type_part = raw_input.split('type:')[1].strip()
-                        
-                        # Find where JSON starts (first '{' or '[')
-                        json_start = -1
-                        for i, char in enumerate(type_part):
-                            if char in ['{', '[']:
-                                json_start = i
-                                break
-                        
-                        if json_start >= 0:
-                            type_str = type_part[:json_start].strip()
-                            json_data = type_part[json_start:].strip()
-                        else:
-                            # No JSON found, try splitting by space
-                            parts = type_part.split(' ', 1)
-                            if len(parts) >= 2:
-                                type_str = parts[0]
-                                json_data = parts[1]
-                            else:
-                                type_str = type_part
-                                json_data = None
-                
-                # Validate extracted data
-                if not type_str or not json_data:
-                    error_msg = "Invalid command format. Use: `/greet embed type:greet {\"content\": \"your message\"}` or `/greet embed type: greet json_data: {\"content\": \"your message\"}`"
-                    if hasattr(ctx, 'followup'):
-                        await ctx.followup.send(error_msg, ephemeral=True)
-                    else:
-                        await ctx.send(error_msg)
-                    return
-                
                 # Validate type
-                if type_str.lower() not in ['welcome', 'leave', 'greet']:
+                if type.lower() not in ['welcome', 'leave', 'greet']:
                     error_msg = "Type must be either 'welcome', 'leave', or 'greet'."
                     if hasattr(ctx, 'followup'):
                         await ctx.followup.send(error_msg, ephemeral=True)
@@ -3681,8 +3626,12 @@ class CommandsController:
                         await ctx.send(error_msg)
                     return
                 
-                # Parse JSON
+                # Parse JSON with flexible input handling
                 try:
+                    # Handle the case where user includes "json_data:" prefix
+                    if json_data.strip().startswith('json_data:'):
+                        json_data = json_data.split('json_data:', 1)[1].strip()
+                    
                     message_data = json.loads(json_data)
                     
                     # Clean up the message data - remove null/empty fields
@@ -3712,7 +3661,7 @@ class CommandsController:
                     return
                 
                 # Set the message
-                if type_str.lower() in ['welcome', 'greet']:
+                if type.lower() in ['welcome', 'greet']:
                     success = await leaderboard_manager.set_welcome_message(ctx.guild.id, message_data)
                     system_name = "Welcome"
                 else:
