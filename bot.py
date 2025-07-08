@@ -170,19 +170,48 @@ class RikoBot(commands.Bot):
         if not self.user:
             return
             
-        statuses = [
-            discord.Activity(type=discord.ActivityType.watching, name="Discord members"),
-            discord.Activity(type=discord.ActivityType.watching, name="image reactions"),
-            discord.Activity(type=discord.ActivityType.playing, name="with image leaderboards"),
-            discord.Activity(type=discord.ActivityType.listening, name="R! commands"),
-            discord.Activity(type=discord.ActivityType.watching, name="for new YouTube videos"),
-            discord.Activity(type=discord.ActivityType.playing, name="image rating games")
+        # Funny status messages
+        self.status_messages = [
+            ("watching", "over {users} Riko Simps"),
+            ("listening", "to Rayen's New Proposals"),
+            ("watching", "Angel be mad at Taishi"),
+            ("listening", "to random people yap in DMs"),
+            ("watching", "new messages & ideas pile up"),
+            ("playing", "with role permissions"),
+            ("watching", "for troublemakers"),
+            ("listening", "to the sound of silence"),
+            ("watching", "paint dry (more fun than modding)"),
+            ("playing", "hide and seek with bugs"),
+            ("listening", "to the screams of banned users"),
+            ("watching", "chaos unfold in general chat"),
+            ("playing", "therapist for drama queens"),
+            ("watching", "people argue about pineapple on pizza"),
+            ("listening", "to excuses from rule breakers"),
+            ("watching", "memes get overused"),
+            ("playing", "whack-a-mole with spammers"),
+            ("watching", "people simp for anime characters"),
+            ("listening", "to theories about everything"),
+            ("watching", "the admin's sanity deteriorate")
         ]
         
         import random
-        activity = random.choice(statuses)
+        activity_type, status_text = random.choice(self.status_messages)
+        
+        # Replace {users} placeholder with actual member count
+        if "{users}" in status_text:
+            total_members = sum(guild.member_count for guild in self.guilds if guild.member_count)
+            status_text = status_text.format(users=total_members)
+        
+        # Map activity type strings to Discord activity types
+        activity_map = {
+            "watching": discord.ActivityType.watching,
+            "listening": discord.ActivityType.listening,
+            "playing": discord.ActivityType.playing
+        }
+        
+        activity = discord.Activity(type=activity_map[activity_type], name=status_text)
         await self.change_presence(activity=activity, status=discord.Status.online)
-        logger.debug(f"Changed status to: {activity.name}")
+        logger.debug(f"Changed status to: {activity_type} {status_text}")
     
     @cycle_status.before_loop
     async def before_cycle_status(self):
