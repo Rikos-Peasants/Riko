@@ -56,6 +56,14 @@ class EventsController:
         @self.bot.event
         async def on_reaction_remove(reaction: discord.Reaction, user: discord.User):
             await self._handle_reaction_change(reaction, user, added=False)
+        
+        @self.bot.event
+        async def on_thread_update(before: discord.Thread, after: discord.Thread):
+            await self._handle_thread_update(before, after)
+        
+        @self.bot.event
+        async def on_thread_delete(thread: discord.Thread):
+            await self._handle_thread_delete(thread)
     
     async def _handle_member_join(self, member: discord.Member):
         """Handle member join events to reapply NSFWBAN role if needed and send welcome message"""
@@ -524,20 +532,60 @@ class EventsController:
                 logger.debug(f"Message from {message.author.display_name} doesn't appear to be a help request: {message.content[:50]}...")
                 return
             
-            # Check if user already has an open thread in this channel
-            existing_thread = await self._get_user_existing_thread(message.author, message.channel)
-            if existing_thread:
-                logger.info(f"User {message.author.display_name} already has an open thread: {existing_thread.name}")
-                # Optionally send a quick message pointing to existing thread
-                try:
-                    await message.reply(f"You already have an open help thread: {existing_thread.mention}", delete_after=10)
-                except discord.Forbidden:
-                    pass
-                return
+            # Check if user already has an active help thread in this channel (from database)
+            existing_thread_data = await self.bot.leaderboard_manager.get_user_active_help_thread(
+                message.author.id, message.channel.id
+            )
             
-            # Create a public thread for the help request
+            if existing_thread_data:
+                # Check if the thread still exists and is active
+                try:
+                    thread_id = int(existing_thread_data['thread_id'])
+                    existing_thread = message.guild.get_thread(thread_id)
+                    
+                    if existing_thread and not existing_thread.archived:
+                        # Thread still exists and is active
+                        logger.info(f"User {message.author.display_name} already has an active help thread: {existing_thread.name}")
+                        try:
+                            await message.reply(
+                                f"You already have an active help thread: {existing_thread.mention}\n"
+                                f"Please continue your discussion there instead of creating a new one.",
+                                delete_after=15
+                            )
+                        except discord.Forbidden:
+                            pass
+                        return
+                    else:
+                        # Thread no longer exists or is archived, deactivate in database
+                        await self.bot.leaderboard_manager.deactivate_help_thread(thread_id)
+                        logger.info(f"Deactivated non-existent help thread {thread_id} for user {message.author.display_name}")
+                except ValueError:
+                    # Invalid thread ID in database
+                    logger.warning(f"Invalid thread ID in database for user {message.author.display_name}: {existing_thread_data['thread_id']}")
+                    await self.bot.leaderboard_manager.deactivate_help_thread(int(existing_thread_data['thread_id']))
+            
+            # Create a new help thread (bot-owned, not user-owned)
             thread_name = f"Help - {message.author.display_name}"
-            thread = await message.create_thread(name=thread_name, auto_archive_duration=60)
+            
+            # Create the thread with the channel, not the message
+            thread = await message.channel.create_thread(
+                name=thread_name,
+                auto_archive_duration=60,
+                type=discord.ChannelType.public_thread,
+                reason=f"Help thread for {message.author.display_name}"
+            )
+            
+            # Add the user to the thread
+            await thread.add_user(message.author)
+            
+            # Store thread information in database
+            await self.bot.leaderboard_manager.create_help_thread(
+                message.author.id,
+                message.author.display_name,
+                message.channel.id,
+                thread.id,
+                thread_name
+            )
             
             # Create the help response message
             help_content = f"""Hey {message.author.mention}! 👋
@@ -558,14 +606,70 @@ Here are some useful resources to help you:
             # Send the help message in the thread
             await thread.send(help_content)
             
+            # Send a reference message in the original channel linking to the thread
+            try:
+                await message.reply(
+                    f"I've created a help thread for you: {thread.mention}\n"
+                    f"Please continue your discussion there!",
+                    delete_after=30
+                )
+            except discord.Forbidden:
+                pass
+            
             channel_name = getattr(message.channel, 'name', 'Unknown Channel')
-            logger.info(f"Created help thread for {message.author.display_name} in #{channel_name}")
+            logger.info(f"Created help thread for {message.author.display_name} in #{channel_name} (Thread ID: {thread.id})")
             
         except discord.Forbidden:
             channel_name = getattr(message.channel, 'name', 'Unknown Channel')
             logger.error(f"Missing permission to create thread in #{channel_name}")
         except Exception as e:
             logger.error(f"Error handling help channel message: {e}")
+
+    async def _handle_thread_update(self, before: discord.Thread, after: discord.Thread):
+        """Handle thread updates to keep database synchronized"""
+        try:
+            # Only handle threads in the help channel
+            if after.parent_id != Config.HELP_CHANNEL_ID:
+                return
+            
+            # Get thread data from database
+            thread_data = await self.bot.leaderboard_manager.get_help_thread_by_id(after.id)
+            if not thread_data:
+                return
+            
+            # Update thread name if changed
+            if before.name != after.name:
+                await self.bot.leaderboard_manager.update_help_thread(
+                    after.id,
+                    thread_name=after.name
+                )
+                logger.info(f"Updated help thread name: {before.name} -> {after.name}")
+            
+            # Update status if archived/unarchived
+            if before.archived != after.archived:
+                await self.bot.leaderboard_manager.update_help_thread(
+                    after.id,
+                    is_active=not after.archived
+                )
+                status = "archived" if after.archived else "unarchived"
+                logger.info(f"Help thread {after.id} {status}")
+                
+        except Exception as e:
+            logger.error(f"Error handling thread update: {e}")
+
+    async def _handle_thread_delete(self, thread: discord.Thread):
+        """Handle thread deletion to update database"""
+        try:
+            # Only handle threads in the help channel
+            if thread.parent_id != Config.HELP_CHANNEL_ID:
+                return
+            
+            # Deactivate thread in database
+            await self.bot.leaderboard_manager.deactivate_help_thread(thread.id)
+            logger.info(f"Deactivated deleted help thread {thread.id}")
+            
+        except Exception as e:
+            logger.error(f"Error handling thread delete: {e}")
     
     def _is_help_request(self, content: str) -> bool:
         """Check if a message looks like a genuine help request"""
@@ -634,31 +738,6 @@ Here are some useful resources to help you:
             return True
         
         return False
-    
-    async def _get_user_existing_thread(self, user: discord.User, channel: discord.TextChannel) -> Optional[discord.Thread]:
-        """Check if user already has an open thread in the help channel"""
-        try:
-            # Get all active threads in the channel
-            async for thread in channel.archived_threads(limit=50):
-                # Check if thread is from this user and not archived
-                if (not thread.archived and 
-                    thread.name.startswith(f"Help - {user.display_name}") and
-                    thread.owner_id == user.id):
-                    return thread
-            
-            # Also check currently active threads
-            for thread in channel.threads:
-                if (thread.name.startswith(f"Help - {user.display_name}") and
-                    thread.owner_id == user.id):
-                    return thread
-            
-            return None
-            
-        except Exception as e:
-            logger.error(f"Error checking for existing threads: {e}")
-            return None
-    
-
     
     async def _check_spam_channel_flood(self, message: discord.Message):
         """Check for message flooding in the spam channel"""
