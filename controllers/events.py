@@ -514,6 +514,11 @@ class EventsController:
     async def _handle_help_channel_message(self, message: discord.Message):
         """Handle messages in the help channel by creating a thread with resources"""
         try:
+            # Skip if this is a reply to another message (likely a response/answer)
+            if message.reference and message.reference.message_id:
+                logger.debug(f"Skipping reply message from {message.author.display_name}")
+                return
+            
             # Check if this message actually looks like a help request
             if not self._is_help_request(message.content):
                 logger.debug(f"Message from {message.author.display_name} doesn't appear to be a help request: {message.content[:50]}...")
@@ -567,56 +572,65 @@ Here are some useful resources to help you:
         content_lower = content.lower().strip()
         
         # Too short messages are probably not help requests
-        if len(content_lower) < 10:
+        if len(content_lower) < 15:
             return False
         
-        # Common help request patterns
-        help_keywords = [
-            # Questions
-            "how do i", "how can i", "how to", "how would i", "how should i",
-            "what is", "what are", "what does", "what's", "whats",
+        # Exclude messages that are giving help/advice rather than asking for it
+        giving_help_indicators = [
+            "you can", "you should", "you need to", "you could", "you might",
+            "try this", "try using", "try to", "here's how", "here is how",
+            "the way to", "what you need", "what you want", "what works",
+            "i recommend", "i suggest", "i think you", "you'll want",
+            "should work", "will work", "would work", "that'll", "that will",
+            "make sure", "just use", "simply use", "all you need",
+            "fastest way", "best way", "easier way", "better to"
+        ]
+        
+        for indicator in giving_help_indicators:
+            if indicator in content_lower:
+                return False
+        
+        # Exclude messages that end with advice-giving patterns
+        if content_lower.endswith(("should help", "will help", "might help", "helps", "works well", "works better")):
+            return False
+        
+        # Strong help request indicators (only check these if not giving help)
+        strong_help_keywords = [
+            # Direct help requests
+            "help me", "need help", "can someone help", "anyone help me",
+            "please help", "could someone help", "can anyone help", "help please"
+            
+            # Problem/issue indicators
+            "having trouble", "having issues", "having problems", "having difficulty",
+            "stuck on", "confused about", "not sure how", "don't know how", "dont know how",
+            "can't figure", "cant figure", "unable to", "doesn't work", "doesnt work",
+            "not working", "broken", "error", "issue with", "problem with",
+            
+            # Question starters
+            "how do i", "how can i", "how should i", "how would i",
+            "what is", "what are", "what does", "what's the",
             "where is", "where can", "where do", "where should",
             "when should", "when do", "when is",
             "why is", "why does", "why can't", "why wont", "why won't",
             "which is", "which should", "which one",
             
-            # Help/problem indicators
-            "help me", "need help", "can someone help", "anyone know",
-            "having trouble", "having issues", "having problems",
-            "stuck on", "confused about", "not sure", "don't know", "dont know",
-            "can't figure", "cant figure", "unable to", "doesn't work", "doesnt work",
-            "not working", "broken", "error", "issue with", "problem with",
-            
-            # Question indicators
-            "question about", "quick question", "dumb question", "stupid question",
-            "asking about", "wondering about", "curious about",
-            "anyone else", "has anyone", "does anyone",
-            
-            # Tutorial/guidance requests
-            "tutorial", "guide", "walkthrough", "step by step", "instructions",
+            # Learning/guidance requests
             "teach me", "show me", "explain", "clarify",
-            
-            # Specific technical terms that usually indicate help requests
-            "setup", "install", "configure", "deploy", "debug", "fix",
-            "implement", "integrate", "optimize", "troubleshoot"
+            "tutorial", "guide", "walkthrough", "step by step", "instructions",
         ]
         
         # Check for question marks (strong indicator)
         if "?" in content:
             return True
         
-        # Check for help keywords
-        for keyword in help_keywords:
+        # Check for strong help keywords
+        for keyword in strong_help_keywords:
             if keyword in content_lower:
                 return True
         
         # Check for sentence patterns that look like questions or requests
-        question_patterns = [
-            content_lower.startswith(("can ", "could ", "would ", "should ", "is ", "are ", "do ", "does ", "will ")),
-            content_lower.endswith(("help", "please", "thanks", "?"))
-        ]
-        
-        if any(question_patterns):
+        question_starters = ("can i", "could i", "would i", "should i", "is there", "are there", "do i", "does this", "will this")
+        if content_lower.startswith(question_starters):
             return True
         
         return False
