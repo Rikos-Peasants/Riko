@@ -542,40 +542,45 @@ Generate a short Ino announcement (10-20 words) that captures her {personality} 
         video_author = video.get('author', 'Unknown')
         channel_id = video.get('test_channel_id', '')
         
+        # Check if video is a YouTube Short (≤60 seconds)
+        duration_seconds = video.get('duration_seconds', 0)
+        is_short = duration_seconds > 0 and duration_seconds <= 60
+        role_ping = f"<@&{Config.SHORTS_ROLE_ID}>" if is_short else f"<@&{Config.YOUTUBE_ROLE_ID}>"
+        
         # Enhanced personality-specific responses matching your style
         if personality == 'standard':
             if channel_id == "UChhMeymAOC5PNbbnqxD_w4g":  # Rayen
-                return f"*sighs* Rayen's unleashed another creation on us. Brace yourselves, Riko simps. <@&1375737416325009552>"
+                return f"*sighs* Rayen's unleashed another creation on us. Brace yourselves, Riko simps. {role_ping}"
             else:
-                return f"*sighs* {video_author} has something new to share. Here we go again, Riko simps. <@&1375737416325009552>"
+                return f"*sighs* {video_author} has something new to share. Here we go again, Riko simps. {role_ping}"
         
         elif personality == 'extra_teasing':
             if channel_id == "UChhMeymAOC5PNbbnqxD_w4g":  # Rayen
-                return f"Well, well... Rayen's feeling creative again. How... ambitious. <@&1375737416325009552>"
+                return f"Well, well... Rayen's feeling creative again. How... ambitious. {role_ping}"
             else:
-                return f"Oh my, {video_author} thinks they're being clever. Adorable. <@&1375737416325009552>"
+                return f"Oh my, {video_author} thinks they're being clever. Adorable. {role_ping}"
         
         elif personality == 'more_caring':
             if channel_id == "UChhMeymAOC5PNbbnqxD_w4g":  # Rayen
-                return f"Rayen's shared something new for you all. I hope you enjoy it, dear ones. <@&1375737416325009552>"
+                return f"Rayen's shared something new for you all. I hope you enjoy it, dear ones. {role_ping}"
             else:
-                return f"{video_author} has prepared something special. Please give it your attention. <@&1375737416325009552>"
+                return f"{video_author} has prepared something special. Please give it your attention. {role_ping}"
         
         elif personality == 'formal_shrine':
             if channel_id == "UChhMeymAOC5PNbbnqxD_w4g":  # Rayen
-                return f"I observe that Rayen has presented a new offering. Do take note. <@&1375737416325009552>"
+                return f"I observe that Rayen has presented a new offering. Do take note. {role_ping}"
             else:
-                return f"The creator {video_author} has made their contribution. Most... noteworthy. <@&1375737416325009552>"
+                return f"The creator {video_author} has made their contribution. Most... noteworthy. {role_ping}"
         
         elif personality == 'exasperated':
             if channel_id == "UChhMeymAOC5PNbbnqxD_w4g":  # Rayen
-                return f"*heavy sigh* Naturally, Rayen couldn't leave well enough alone. My condolences, Riko simps. <@&1375737416325009552>"
+                return f"*heavy sigh* Naturally, Rayen couldn't leave well enough alone. My condolences, Riko simps. {role_ping}"
             else:
-                return f"*sighs deeply* {video_author} strikes again. What am I even dealing with today? <@&1375737416325009552>"
+                return f"*sighs deeply* {video_author} strikes again. What am I even dealing with today? {role_ping}"
         
         else:
             # Default fallback
-            return f"*sighs* {video_author} uploaded \"{video_title}\". Here we go, Riko simps. <@&1375737416325009552>"
+            return f"*sighs* {video_author} uploaded \"{video_title}\". Here we go, Riko simps. {role_ping}"
     
     def load_system_prompt(self) -> str:
         """Load the FULL system prompt from system-prompt.txt"""
@@ -610,11 +615,14 @@ When announcing videos, you address the server members as "Riko simps" with fond
 PERSONALITY: Caring but exasperated, gently teasing, protective, composed authority
 SPEAKING STYLE: Start with expressions like "*sighs*", "Well, well...", "Oh my...", "Naturally..."
 CRITICAL: Riko is DIGITAL - she cannot make physical videos! Physical videos are made by HUMANS.
-FORMAT: Keep announcements 10-20 words max, always end with <@&1375737416325009552>
+FORMAT: Keep announcements 10-20 words max, always end with appropriate role ping:
+- For YouTube Shorts (≤60 seconds): <@&1392619703603822773>
+- For regular videos (>60 seconds): <@&1375737416325009552>
 
 EXAMPLES:
 "*sighs* [Creator] uploaded [title]. Here we go again, Riko simps. <@&1375737416325009552>"
 "Well, well... [Creator] made something new. How interesting. <@&1375737416325009552>"
+"Oh my, a quick short from [Creator]. Straight to the point. <@&1392619703603822773>"
 """
     
     async def post_announcement(self, announcement: str, personality: str, video: Dict[str, Any]):

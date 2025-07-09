@@ -5,6 +5,7 @@ from models.quest_manager import QuestManager
 from views.embeds import EmbedViews
 from config import Config
 import logging
+from typing import List
 
 logger = logging.getLogger(__name__)
 
@@ -381,6 +382,11 @@ class EventsController:
         # Check for spam channel flood detection
         await self._check_spam_channel_flood(message)
         
+        # Check if message is in help channel
+        if message.channel.id == Config.HELP_CHANNEL_ID:
+            await self._handle_help_channel_message(message)
+            return
+        
         # Check if message is in image reaction channels
         if message.channel.id not in Config.IMAGE_REACTION_CHANNELS:
             return
@@ -504,6 +510,45 @@ class EventsController:
                 
         except Exception as e:
             logger.error(f"Error checking for chat reminder: {e}")
+    
+    async def _handle_help_channel_message(self, message: discord.Message):
+        """Handle messages in the help channel by creating a thread with resources"""
+        try:
+            # Create a thread for the help request
+            thread_name = f"Help - {message.author.display_name}"
+            thread = await message.create_thread(name=thread_name)
+            
+            # Create the help response message
+            help_content = f"""Hey {message.author.mention}! 👋
+
+Here are some useful resources to help you:
+
+**📂 Channel with all projects of rayen:**
+<#{Config.PROJECTS_CHANNEL_ID}>
+
+**💻 Riko's Code:**
+https://github.com/rayenfeng/riko_project
+
+**🎬 Rayen's YouTube:**
+https://www.youtube.com/@JustRayen
+
+**📞 Support Role:**
+<@&{Config.HELP_ROLE_ID}>"""
+            
+            # Always ping help role for help requests
+            help_content += f"\n\n**📞 Support:**\n<@&{Config.HELP_ROLE_ID}>"
+            
+            # Send the help message in the thread
+            await thread.send(help_content)
+            
+            logger.info(f"Created help thread for {message.author.display_name} in #{message.channel.name}")
+            
+        except discord.Forbidden:
+            logger.error(f"Missing permission to create thread in #{message.channel.name}")
+        except Exception as e:
+            logger.error(f"Error handling help channel message: {e}")
+    
+
     
     async def _check_spam_channel_flood(self, message: discord.Message):
         """Check for message flooding in the spam channel"""

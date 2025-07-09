@@ -42,6 +42,15 @@ class Config:
         1278117139428933649
     ]
     
+    # Help channel monitoring
+    HELP_CHANNEL_ID = 1301366087975178312  # "I need help" channel
+    PROJECTS_CHANNEL_ID = 1278117139428933645  # Channel with all projects of rayen
+    HELP_ROLE_ID = 1347922925218435114  # Role to ping for help requests
+    
+    # YouTube monitoring roles
+    YOUTUBE_ROLE_ID = 1375737416325009552  # Default role for YouTube videos
+    SHORTS_ROLE_ID = 1392619703603822773  # Role to ping for YouTube Shorts (≤60 seconds)
+    
     # Warning log channel (can be configured with /setlogchannel)
     WARNING_LOG_CHANNEL_ID: Optional[int] = None  # Will be set dynamically
     

@@ -495,7 +495,7 @@ class YouTubeMonitor:
             logger.error(f"Error getting recent videos for {youtube_channel_id}: {e}")
             return []
 
-    async def generate_ino_response(self, video: Dict[str, Any]) -> Optional[str]:
+    async def generate_ino_response(self, video: Dict[str, Any], is_short: bool = False) -> Optional[str]:
         """Generate Ino's response to a new video using Gemini AI with video attachment"""
         try:
             if not self.gemini_client:
@@ -505,10 +505,13 @@ class YouTubeMonitor:
                 channel_id = video.get('config', {}).get('channel_id', '')
                 is_rayen_channel = channel_id == 'UChhMeymAOC5PNbbnqxD_w4g'
                 
+                # Choose appropriate role based on video type
+                role_ping = f"<@&{Config.SHORTS_ROLE_ID}>" if is_short else f"<@&{Config.YOUTUBE_ROLE_ID}>"
+                
                 if is_rayen_channel:
-                    return f"Oh my, Rayen uploaded something new: \"{video_title}\". Time to see what he's up to now, Riko simps. <@&1375737416325009552>"
+                    return f"Oh my, Rayen uploaded something new: \"{video_title}\". Time to see what he's up to now, Riko simps. {role_ping}"
                 else:
-                    return f"Oh my, our digital fox uploaded something new: \"{video_title}\". Time to see what mischief she's up to now, Riko simps. <@&1375737416325009552>"
+                    return f"Oh my, our digital fox uploaded something new: \"{video_title}\". Time to see what mischief she's up to now, Riko simps. {role_ping}"
             
             # Read the system prompt from file
             system_prompt = self.load_system_prompt()
@@ -567,7 +570,10 @@ WRONG ATTRIBUTION (NEVER DO THIS):
 
 Create a short announcement (10-20 words) using the ACTUAL creator's name "{video_author}", not Riko!
 
-Remember to include the role ping <@&1375737416325009552> at the end."""
+VIDEO TYPE: {'YouTube Short (≤60 seconds)' if is_short else 'Regular Video (>60 seconds)'}
+ROLE TO PING: {'<@&' + str(Config.SHORTS_ROLE_ID) + '>' if is_short else '<@&' + str(Config.YOUTUBE_ROLE_ID) + '>'}
+
+Remember to include the correct role ping at the end based on video type!
                         ),
                     ],
                 ),
@@ -594,7 +600,7 @@ Remember to include the role ping <@&1375737416325009552> at the end."""
             else:
                 # Fallback to context-aware template
                 logger.info("Using fallback Ino response template")
-                return self._get_fallback_response(video_title, is_rayen_channel, video_author)
+                return self._get_fallback_response(video_title, is_rayen_channel, video_author, is_short)
             
         except Exception as e:
             logger.error(f"Error generating Ino response: {e}")
@@ -603,39 +609,42 @@ Remember to include the role ping <@&1375737416325009552> at the end."""
             is_rayen_channel = channel_id == 'UChhMeymAOC5PNbbnqxD_w4g'
             video_title = video.get('title', 'Unknown')
             video_author = video.get('author', 'Unknown')
-            return self._get_fallback_response(video_title, is_rayen_channel, video_author)
+            return self._get_fallback_response(video_title, is_rayen_channel, video_author, is_short)
     
-    def _get_fallback_response(self, video_title: str, is_rayen_channel: bool, video_author: str = "Unknown") -> str:
+    def _get_fallback_response(self, video_title: str, is_rayen_channel: bool, video_author: str = "Unknown", is_short: bool = False) -> str:
         """Get appropriate fallback response based on channel type and content"""
+        # Choose appropriate role based on video type
+        role_ping = f"<@&{Config.SHORTS_ROLE_ID}>" if is_short else f"<@&{Config.YOUTUBE_ROLE_ID}>"
+        
         # Check if it's a guest/collaboration based on author name
         is_guest_content = video_author and video_author.lower() not in ['riko', 'rayen', 'just rayen', 'unknown']
         
         if is_guest_content:
             # Guest/collaboration content
             if 'cover' in video_title.lower():
-                return f"Well, well... a cover by {video_author}: \"{video_title}\". The shrine approves of this offering. <@&1375737416325009552>"
+                return f"Well, well... a cover by {video_author}: \"{video_title}\". The shrine approves of this offering. {role_ping}"
             else:
-                return f"Oh my, {video_author} graced the channel with \"{video_title}\". How... refreshing. <@&1375737416325009552>"
+                return f"Oh my, {video_author} graced the channel with \"{video_title}\". How... refreshing. {role_ping}"
         elif 'cover' in video_title.lower():
             if is_rayen_channel:
-                return f"Well, well... Rayen's covering something new: \"{video_title}\". His voice work shows promise. <@&1375737416325009552>"
+                return f"Well, well... Rayen's covering something new: \"{video_title}\". His voice work shows promise. {role_ping}"
             else:
-                return f"Well, well... new cover from our digital fox: \"{video_title}\". Her voice work shows promise. <@&1375737416325009552>"
+                return f"Well, well... new cover from our digital fox: \"{video_title}\". Her voice work shows promise. {role_ping}"
         elif any(word in video_title.lower() for word in ['game', 'gaming', 'play', 'minecraft', 'horror']):
             if is_rayen_channel:
-                return f"I see Rayen uploaded another gaming adventure: \"{video_title}\". The volume levels are... enthusiastic. <@&1375737416325009552>"
+                return f"I see Rayen uploaded another gaming adventure: \"{video_title}\". The volume levels are... enthusiastic. {role_ping}"
             else:
-                return f"I see the fox uploaded another gaming adventure: \"{video_title}\". The volume levels are... enthusiastic. <@&1375737416325009552>"
+                return f"I see the fox uploaded another gaming adventure: \"{video_title}\". The volume levels are... enthusiastic. {role_ping}"
         elif any(word in video_title.lower() for word in ['tutorial', 'how to', 'guide', 'cook']):
             if is_rayen_channel:
-                return f"Honestly, another tutorial from Rayen: \"{video_title}\". Let's see what survives this time. <@&1375737416325009552>"
+                return f"Honestly, another tutorial from Rayen: \"{video_title}\". Let's see what survives this time. {role_ping}"
             else:
-                return f"Honestly, another tutorial from that troublesome fox: \"{video_title}\". Let's see what survives this time. <@&1375737416325009552>"
+                return f"Honestly, another tutorial from that troublesome fox: \"{video_title}\". Let's see what survives this time. {role_ping}"
         else:
             if is_rayen_channel:
-                return f"Naturally, Riko simps, Rayen is trying something new again: \"{video_title}\". How... ambitious. <@&1375737416325009552>"
+                return f"Naturally, Riko simps, Rayen is trying something new again: \"{video_title}\". How... ambitious. {role_ping}"
             else:
-                return f"Naturally, Riko simps, your fox is trying something new again: \"{video_title}\". How... ambitious. <@&1375737416325009552>"
+                return f"Naturally, Riko simps, your fox is trying something new again: \"{video_title}\". How... ambitious. {role_ping}"
 
     def load_system_prompt(self) -> str:
         """Load the system prompt from file"""
@@ -701,14 +710,19 @@ Remember to include the role ping <@&1375737416325009552> at the end."""
                 logger.error(f"Channel {discord_channel_id} is not messageable (type: {type(channel).__name__})")
                 return
             
-            # Generate Ino's response
-            ino_response = await self.generate_ino_response(video)
+            # Check if video is a YouTube Short (≤60 seconds)
+            duration_seconds = video.get('duration_seconds', 0)
+            is_short = duration_seconds > 0 and duration_seconds <= 60
+            
+            # Generate Ino's response with appropriate role
+            ino_response = await self.generate_ino_response(video, is_short)
             
             if ino_response:
                 # Post the announcement with video link
                 message = f"{ino_response}\n{video.get('link', '')}"
                 await channel.send(message)
-                logger.info(f"✅ Posted Ino announcement for: {video.get('title', 'Unknown')}")
+                short_info = f" (SHORT: {duration_seconds}s)" if is_short else f" ({duration_seconds}s)"
+                logger.info(f"✅ Posted Ino announcement for: {video.get('title', 'Unknown')}{short_info}")
             else:
                 # This shouldn't happen now since we have fallbacks, but just in case
                 video_title = video.get('title', 'Unknown')
@@ -717,7 +731,7 @@ Remember to include the role ping <@&1375737416325009552> at the end."""
                 is_rayen_channel = channel_id == 'UChhMeymAOC5PNbbnqxD_w4g'
                 
                 # Use the context-aware fallback
-                fallback_response = self._get_fallback_response(video_title, is_rayen_channel, video_author)
+                fallback_response = self._get_fallback_response(video_title, is_rayen_channel, video_author, is_short)
                 fallback_msg = f"{fallback_response}\n{video.get('link', '')}"
                 
                 # Channel send capability already checked above
