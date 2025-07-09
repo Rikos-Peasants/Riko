@@ -514,9 +514,9 @@ class EventsController:
     async def _handle_help_channel_message(self, message: discord.Message):
         """Handle messages in the help channel by creating a thread with resources"""
         try:
-            # Create a thread for the help request
+            # Create a public thread for the help request
             thread_name = f"Help - {message.author.display_name}"
-            thread = await message.create_thread(name=thread_name)
+            thread = await message.create_thread(name=thread_name, auto_archive_duration=60)
             
             # Create the help response message
             help_content = f"""Hey {message.author.mention}! 👋
@@ -527,16 +527,12 @@ Here are some useful resources to help you:
 <#{Config.PROJECTS_CHANNEL_ID}>
 
 **💻 Riko's Code:**
-https://github.com/rayenfeng/riko_project
+<https://github.com/rayenfeng/riko_project>
 
 **🎬 Rayen's YouTube:**
-https://www.youtube.com/@JustRayen
+<https://www.youtube.com/@JustRayen>
 
-**📞 Support Role:**
 <@&{Config.HELP_ROLE_ID}>"""
-            
-            # Always ping help role for help requests
-            help_content += f"\n\n**📞 Support:**\n<@&{Config.HELP_ROLE_ID}>"
             
             # Send the help message in the thread
             await thread.send(help_content)
