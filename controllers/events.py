@@ -5,7 +5,7 @@ from models.quest_manager import QuestManager
 from views.embeds import EmbedViews
 from config import Config
 import logging
-from typing import List
+from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -514,6 +514,22 @@ class EventsController:
     async def _handle_help_channel_message(self, message: discord.Message):
         """Handle messages in the help channel by creating a thread with resources"""
         try:
+            # Check if this message actually looks like a help request
+            if not self._is_help_request(message.content):
+                logger.debug(f"Message from {message.author.display_name} doesn't appear to be a help request: {message.content[:50]}...")
+                return
+            
+            # Check if user already has an open thread in this channel
+            existing_thread = await self._get_user_existing_thread(message.author, message.channel)
+            if existing_thread:
+                logger.info(f"User {message.author.display_name} already has an open thread: {existing_thread.name}")
+                # Optionally send a quick message pointing to existing thread
+                try:
+                    await message.reply(f"You already have an open help thread: {existing_thread.mention}", delete_after=10)
+                except discord.Forbidden:
+                    pass
+                return
+            
             # Create a public thread for the help request
             thread_name = f"Help - {message.author.display_name}"
             thread = await message.create_thread(name=thread_name, auto_archive_duration=60)
@@ -537,12 +553,96 @@ Here are some useful resources to help you:
             # Send the help message in the thread
             await thread.send(help_content)
             
-            logger.info(f"Created help thread for {message.author.display_name} in #{message.channel.name}")
+            channel_name = getattr(message.channel, 'name', 'Unknown Channel')
+            logger.info(f"Created help thread for {message.author.display_name} in #{channel_name}")
             
         except discord.Forbidden:
-            logger.error(f"Missing permission to create thread in #{message.channel.name}")
+            channel_name = getattr(message.channel, 'name', 'Unknown Channel')
+            logger.error(f"Missing permission to create thread in #{channel_name}")
         except Exception as e:
             logger.error(f"Error handling help channel message: {e}")
+    
+    def _is_help_request(self, content: str) -> bool:
+        """Check if a message looks like a genuine help request"""
+        content_lower = content.lower().strip()
+        
+        # Too short messages are probably not help requests
+        if len(content_lower) < 10:
+            return False
+        
+        # Common help request patterns
+        help_keywords = [
+            # Questions
+            "how do i", "how can i", "how to", "how would i", "how should i",
+            "what is", "what are", "what does", "what's", "whats",
+            "where is", "where can", "where do", "where should",
+            "when should", "when do", "when is",
+            "why is", "why does", "why can't", "why wont", "why won't",
+            "which is", "which should", "which one",
+            
+            # Help/problem indicators
+            "help me", "need help", "can someone help", "anyone know",
+            "having trouble", "having issues", "having problems",
+            "stuck on", "confused about", "not sure", "don't know", "dont know",
+            "can't figure", "cant figure", "unable to", "doesn't work", "doesnt work",
+            "not working", "broken", "error", "issue with", "problem with",
+            
+            # Question indicators
+            "question about", "quick question", "dumb question", "stupid question",
+            "asking about", "wondering about", "curious about",
+            "anyone else", "has anyone", "does anyone",
+            
+            # Tutorial/guidance requests
+            "tutorial", "guide", "walkthrough", "step by step", "instructions",
+            "teach me", "show me", "explain", "clarify",
+            
+            # Specific technical terms that usually indicate help requests
+            "setup", "install", "configure", "deploy", "debug", "fix",
+            "implement", "integrate", "optimize", "troubleshoot"
+        ]
+        
+        # Check for question marks (strong indicator)
+        if "?" in content:
+            return True
+        
+        # Check for help keywords
+        for keyword in help_keywords:
+            if keyword in content_lower:
+                return True
+        
+        # Check for sentence patterns that look like questions or requests
+        question_patterns = [
+            content_lower.startswith(("can ", "could ", "would ", "should ", "is ", "are ", "do ", "does ", "will ")),
+            content_lower.endswith(("help", "please", "thanks", "?"))
+        ]
+        
+        if any(question_patterns):
+            return True
+        
+        return False
+    
+    async def _get_user_existing_thread(self, user: discord.User, channel: discord.TextChannel) -> Optional[discord.Thread]:
+        """Check if user already has an open thread in the help channel"""
+        try:
+            # Get all active threads in the channel
+            async for thread in channel.archived_threads(limit=50):
+                # Check if thread is from this user and not archived
+                if (not thread.archived and 
+                    thread.name.startswith(f"Help - {user.display_name}") and
+                    thread.owner_id == user.id):
+                    return thread
+            
+            # Also check currently active threads
+            for thread in channel.threads:
+                if (thread.name.startswith(f"Help - {user.display_name}") and
+                    thread.owner_id == user.id):
+                    return thread
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error checking for existing threads: {e}")
+            return None
     
 
     
