@@ -393,6 +393,7 @@ class SchedulerController:
                 logger.warning("YouTube monitor not available on bot instance")
                 return
             
+            # Load monitored channels (this is safe to call repeatedly)
             await youtube_monitor.load_monitored_channels()
             
             # Log how many channels we're monitoring

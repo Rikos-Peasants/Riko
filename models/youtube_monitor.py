@@ -54,8 +54,7 @@ class YouTubeMonitor:
             logger.warning("No Gemini API key found - Ino responses will use fallback templates")
             self.gemini_client = None
 
-        # Initialize monitored channels from database
-        asyncio.create_task(self.load_monitored_channels())
+        # Note: monitored channels will be loaded later when an event loop is available
 
     async def load_monitored_channels(self):
         """Load monitored channels from MongoDB"""
