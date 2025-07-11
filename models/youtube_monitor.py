@@ -573,7 +573,7 @@ VIDEO TYPE: {'YouTube Short (≤60 seconds)' if is_short else 'Regular Video (>6
 ROLE TO PING: {'<@&' + str(Config.SHORTS_ROLE_ID) + '>' if is_short else '<@&' + str(Config.YOUTUBE_ROLE_ID) + '>'}
 
 Remember to include the correct role ping at the end based on video type!
-                        ),
+                        """),
                     ],
                 ),
             ]
@@ -799,4 +799,3 @@ Remember to include the correct role ping at the end based on video type!
             
         except Exception as e:
             logger.error(f"Error marking video {video_id} as processed: {e}")
- 
