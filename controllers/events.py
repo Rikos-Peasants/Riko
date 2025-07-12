@@ -564,19 +564,15 @@ class EventsController:
                     logger.warning(f"Invalid thread ID in database for user {message.author.display_name}: {existing_thread_data['thread_id']}")
                     await self.bot.leaderboard_manager.deactivate_help_thread(int(existing_thread_data['thread_id']))
             
-            # Create a new help thread (bot-owned, not user-owned)
+            # Create a new help thread attached to the user's message
             thread_name = f"Help - {message.author.display_name}"
             
-            # Create the thread with the channel, not the message
-            thread = await message.channel.create_thread(
+            # Create the thread attached to the user's message
+            thread = await message.create_thread(
                 name=thread_name,
-                auto_archive_duration=60,
-                type=discord.ChannelType.public_thread,
+                auto_archive_duration=60,  # Auto-archive after 1 hour for easier closing
                 reason=f"Help thread for {message.author.display_name}"
             )
-            
-            # Add the user to the thread
-            await thread.add_user(message.author)
             
             # Store thread information in database
             await self.bot.leaderboard_manager.create_help_thread(
@@ -601,7 +597,12 @@ Here are some useful resources to help you:
 **🎬 Rayen's YouTube:**
 <https://www.youtube.com/@JustRayen>
 
-<@&{Config.HELP_ROLE_ID}>"""
+<@&{Config.HELP_ROLE_ID}>
+
+💡 **Thread Management:**
+• This thread will automatically close after 1 hour of inactivity
+• To close it manually, right-click on the thread and select "Archive Thread"
+• You can also use the "🔒" button in the thread settings"""
             
             # Send the help message in the thread
             await thread.send(help_content)
