@@ -3324,6 +3324,360 @@ class CommandsController:
             except Exception as e:
                 await ctx.send(f"❌ Error testing bookmark: {str(e)}")
         
+        # HELP THREAD COMMANDS
+        @self.bot.hybrid_command(name='createthread', description='Create a help thread from an existing message')
+        @commands.has_permissions(manage_messages=True)
+        async def create_thread_command(ctx, message_id: str, *, custom_title: Optional[str] = None):
+            """Create a help thread from an existing message in the help channel"""
+            try:
+                # Check if this is a slash command (has defer) or text command
+                if hasattr(ctx, 'defer'):
+                    await ctx.defer()
+                
+                # Validate guild
+                guild = ctx.guild
+                if not guild or guild.id != Config.GUILD_ID:
+                    error_msg = "This command can only be used in the configured guild."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Get the help channel
+                help_channel = guild.get_channel(Config.HELP_CHANNEL_ID)
+                if not help_channel:
+                    error_msg = "Help channel not found."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Try to get the message
+                try:
+                    message = await help_channel.fetch_message(int(message_id))
+                except (discord.NotFound, discord.Forbidden, ValueError):
+                    error_msg = f"Could not find message with ID {message_id} in the help channel."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Check if message is from a bot
+                if message.author.bot:
+                    error_msg = "Cannot create threads from bot messages."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Check if user already has an active help thread
+                leaderboard_manager = self.get_leaderboard_manager()
+                if not leaderboard_manager:
+                    error_msg = "Database manager is not available."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                existing_thread_data = await leaderboard_manager.get_user_active_help_thread(
+                    message.author.id, help_channel.id
+                )
+                
+                if existing_thread_data:
+                    # Check if the thread still exists and is active
+                    try:
+                        thread_id = int(existing_thread_data['thread_id'])
+                        existing_thread = guild.get_thread(thread_id)
+                        
+                        if existing_thread and not existing_thread.archived:
+                            # Thread still exists and is active
+                            error_msg = f"User {message.author.display_name} already has an active help thread: {existing_thread.mention}"
+                            if hasattr(ctx, 'followup'):
+                                await ctx.followup.send(error_msg, ephemeral=True)
+                            else:
+                                await ctx.send(error_msg)
+                            return
+                        else:
+                            # Thread no longer exists or is archived, deactivate in database
+                            await leaderboard_manager.deactivate_help_thread(thread_id)
+                            logger.info(f"Deactivated non-existent help thread {thread_id} for user {message.author.display_name}")
+                    except ValueError:
+                        # Invalid thread ID in database
+                        logger.warning(f"Invalid thread ID in database for user {message.author.display_name}: {existing_thread_data['thread_id']}")
+                        await leaderboard_manager.deactivate_help_thread(int(existing_thread_data['thread_id']))
+                
+                # Create thread name
+                if custom_title:
+                    thread_name = f"Help - {custom_title}"
+                else:
+                    thread_name = f"Help - {message.author.display_name}"
+                
+                # Create the thread
+                thread = await help_channel.create_thread(
+                    name=thread_name,
+                    auto_archive_duration=60,
+                    type=discord.ChannelType.public_thread,
+                    reason=f"Help thread created by {ctx.author.display_name} for {message.author.display_name}"
+                )
+                
+                # Add the original message author to the thread
+                await thread.add_user(message.author)
+                
+                # Store thread information in database
+                await leaderboard_manager.create_help_thread(
+                    message.author.id,
+                    message.author.display_name,
+                    help_channel.id,
+                    thread.id,
+                    thread_name
+                )
+                
+                # Create the help response message
+                help_content = f"""Hey {message.author.mention}! 👋
+
+A moderator has created this help thread for your message: {message.jump_url}
+
+Here are some useful resources to help you:
+
+**📂 Channel with all projects of rayen:**
+<#{Config.PROJECTS_CHANNEL_ID}>
+
+**💻 Riko's Code:**
+<https://github.com/rayenfeng/riko_project>
+
+**🎬 Rayen's YouTube:**
+<https://www.youtube.com/@JustRayen>
+
+<@&{Config.HELP_ROLE_ID}>"""
+                
+                # Send the help message in the thread
+                await thread.send(help_content)
+                
+                # Send confirmation message
+                success_msg = f"✅ Successfully created help thread: {thread.mention} for {message.author.display_name}'s message."
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(success_msg, ephemeral=True)
+                else:
+                    await ctx.send(success_msg)
+                
+                logger.info(f"Created help thread manually by {ctx.author.display_name} for {message.author.display_name} (Thread ID: {thread.id})")
+                
+            except discord.Forbidden:
+                error_msg = "Missing permission to create threads in the help channel."
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(error_msg, ephemeral=True)
+                else:
+                    await ctx.send(error_msg)
+            except Exception as e:
+                error_embed = EmbedViews.error_embed(f"Failed to create help thread: {str(e)}")
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(embed=error_embed, ephemeral=True)
+                else:
+                    await ctx.send(embed=error_embed)
+
+        @self.bot.hybrid_command(name='bulkthreads', description='Create help threads from multiple messages (Bot owners only)')
+        @commands.is_owner()
+        async def bulk_threads_command(ctx, days_back: int = 7):
+            """Create help threads from recent messages that look like help requests"""
+            try:
+                # Check if this is a slash command (has defer) or text command
+                if hasattr(ctx, 'defer'):
+                    await ctx.defer()
+                
+                # Validate guild
+                guild = ctx.guild
+                if not guild or guild.id != Config.GUILD_ID:
+                    error_msg = "This command can only be used in the configured guild."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Get the help channel
+                help_channel = guild.get_channel(Config.HELP_CHANNEL_ID)
+                if not help_channel:
+                    error_msg = "Help channel not found."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Get the events controller for help request detection
+                events_controller = self.get_events_controller()
+                if not events_controller:
+                    error_msg = "Events controller is not available."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Get leaderboard manager
+                leaderboard_manager = self.get_leaderboard_manager()
+                if not leaderboard_manager:
+                    error_msg = "Database manager is not available."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Calculate date range
+                from datetime import datetime, timedelta
+                cutoff_date = datetime.now() - timedelta(days=days_back)
+                
+                # Scan recent messages in the help channel
+                help_messages = []
+                scanned_count = 0
+                
+                async for message in help_channel.history(limit=None, after=cutoff_date):
+                    scanned_count += 1
+                    
+                    # Skip bot messages
+                    if message.author.bot:
+                        continue
+                    
+                    # Skip messages that are replies (likely responses)
+                    if message.reference and message.reference.message_id:
+                        continue
+                    
+                    # Check if this looks like a help request
+                    if events_controller._is_help_request(message.content):
+                        help_messages.append(message)
+                
+                if not help_messages:
+                    msg = f"No help requests found in the last {days_back} days (scanned {scanned_count} messages)."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(msg, ephemeral=True)
+                    else:
+                        await ctx.send(msg)
+                    return
+                
+                # Send initial status
+                status_msg = f"Found {len(help_messages)} potential help requests from the last {days_back} days. Processing..."
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(status_msg)
+                else:
+                    status_response = await ctx.send(status_msg)
+                
+                # Process each help message
+                created_count = 0
+                skipped_count = 0
+                failed_count = 0
+                
+                for message in help_messages:
+                    try:
+                        # Check if user already has an active help thread
+                        existing_thread_data = await leaderboard_manager.get_user_active_help_thread(
+                            message.author.id, help_channel.id
+                        )
+                        
+                        if existing_thread_data:
+                            # Check if the thread still exists and is active
+                            try:
+                                thread_id = int(existing_thread_data['thread_id'])
+                                existing_thread = guild.get_thread(thread_id)
+                                
+                                if existing_thread and not existing_thread.archived:
+                                    # Thread still exists and is active, skip
+                                    skipped_count += 1
+                                    continue
+                                else:
+                                    # Thread no longer exists or is archived, deactivate in database
+                                    await leaderboard_manager.deactivate_help_thread(thread_id)
+                            except ValueError:
+                                # Invalid thread ID in database
+                                await leaderboard_manager.deactivate_help_thread(int(existing_thread_data['thread_id']))
+                        
+                        # Create thread name
+                        thread_name = f"Help - {message.author.display_name}"
+                        
+                        # Create the thread
+                        thread = await help_channel.create_thread(
+                            name=thread_name,
+                            auto_archive_duration=60,
+                            type=discord.ChannelType.public_thread,
+                            reason=f"Bulk help thread creation by {ctx.author.display_name}"
+                        )
+                        
+                        # Add the original message author to the thread
+                        await thread.add_user(message.author)
+                        
+                        # Store thread information in database
+                        await leaderboard_manager.create_help_thread(
+                            message.author.id,
+                            message.author.display_name,
+                            help_channel.id,
+                            thread.id,
+                            thread_name
+                        )
+                        
+                        # Create the help response message
+                        help_content = f"""Hey {message.author.mention}! 👋
+
+A moderator has created this help thread for your message: {message.jump_url}
+
+Here are some useful resources to help you:
+
+**📂 Channel with all projects of rayen:**
+<#{Config.PROJECTS_CHANNEL_ID}>
+
+**💻 Riko's Code:**
+<https://github.com/rayenfeng/riko_project>
+
+**🎬 Rayen's YouTube:**
+<https://www.youtube.com/@JustRayen>
+
+<@&{Config.HELP_ROLE_ID}>"""
+                        
+                        # Send the help message in the thread
+                        await thread.send(help_content)
+                        
+                        created_count += 1
+                        logger.info(f"Bulk created help thread for {message.author.display_name} (Thread ID: {thread.id})")
+                        
+                        # Add small delay to avoid rate limits
+                        await asyncio.sleep(0.5)
+                        
+                    except Exception as e:
+                        logger.error(f"Failed to create thread for message {message.id}: {e}")
+                        failed_count += 1
+                        continue
+                
+                # Send completion message
+                completion_msg = f"✅ **Bulk Thread Creation Complete!**\n\n"
+                completion_msg += f"📊 **Results:**\n"
+                completion_msg += f"• **Created:** {created_count} threads\n"
+                completion_msg += f"• **Skipped:** {skipped_count} (already have active threads)\n"
+                completion_msg += f"• **Failed:** {failed_count} (errors)\n"
+                completion_msg += f"• **Total Scanned:** {scanned_count} messages\n"
+                completion_msg += f"• **Time Period:** Last {days_back} days"
+                
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(completion_msg)
+                else:
+                    await status_response.edit(content=completion_msg)
+                
+            except discord.Forbidden:
+                error_msg = "Missing permission to create threads in the help channel."
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(error_msg, ephemeral=True)
+                else:
+                    await ctx.send(error_msg)
+            except Exception as e:
+                error_embed = EmbedViews.error_embed(f"Failed to create bulk help threads: {str(e)}")
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(embed=error_embed, ephemeral=True)
+                else:
+                    await ctx.send(embed=error_embed)
+
         # PURGE COMMANDS
         @self.bot.hybrid_group(name='purge', description='Purge messages with various filters')
         @commands.has_permissions(manage_messages=True)
