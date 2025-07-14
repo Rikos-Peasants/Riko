@@ -149,14 +149,7 @@ class RikoBot(commands.Bot):
             logger.info("Started scheduled tasks for best image posting")
             logger.info("Best images will be posted back to their original channels")
         
-        # Start random announcements (TEMPORARY FOR RESEARCH)
-        if self.random_announcer:
-            self.random_announcer.start_announcements()
-            logger.info("Started random announcement system - TEMPORARY FOR RESEARCH")
-            logger.info("Random announcements will be posted every 15 minutes with feedback buttons")
-            
-            # Post initial startup announcement
-            asyncio.create_task(self.random_announcer.post_startup_announcement())
+
         
         # Start status cycling
         self.cycle_status.start()
@@ -230,10 +223,7 @@ class RikoBot(commands.Bot):
         if self.scheduler_controller:
             self.scheduler_controller.stop_tasks()
         
-        # Stop random announcements (TEMPORARY FOR RESEARCH)
-        if hasattr(self, 'random_announcer') and self.random_announcer:
-            self.random_announcer.stop_announcements()
-            logger.info("Stopped random announcement system")
+
         
         # Close MongoDB connection
         if hasattr(self, 'leaderboard_manager') and self.leaderboard_manager:

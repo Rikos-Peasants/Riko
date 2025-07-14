@@ -15,95 +15,7 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
-class PersonalityFeedbackView(discord.ui.View):
-    """Persistent view for personality feedback with modern Discord UI"""
-    
-    def __init__(self, personality: str, video_data: Dict[str, Any]):
-        super().__init__(timeout=None)  # Persistent view - no timeout!
-        self.personality = personality
-        self.video_data = video_data
-        
-    @discord.ui.button(label='👍 Good', style=discord.ButtonStyle.success, custom_id='feedback_good')
-    async def feedback_good(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._handle_feedback(interaction, 'good', '👍')
-    
-    @discord.ui.button(label='👎 Needs Work', style=discord.ButtonStyle.danger, custom_id='feedback_bad')
-    async def feedback_bad(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._handle_feedback(interaction, 'bad', '👎')
-    
-    @discord.ui.button(label='❤️ Love It', style=discord.ButtonStyle.primary, custom_id='feedback_love')
-    async def feedback_love(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._handle_feedback(interaction, 'love', '❤️')
-    
-    @discord.ui.button(label='😴 Too Boring', style=discord.ButtonStyle.secondary, custom_id='feedback_boring')
-    async def feedback_boring(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._handle_feedback(interaction, 'boring', '😴')
-    
 
-    
-    async def _handle_feedback(self, interaction: discord.Interaction, feedback_type: str, emoji: str):
-        """Handle feedback button clicks and store in database"""
-        try:
-            await interaction.response.defer(ephemeral=True)
-            
-            # Get the RandomAnnouncer instance to store feedback
-            random_announcer = getattr(interaction.client, 'random_announcer', None)
-            
-            # Store feedback in database
-            if random_announcer:
-                # Get announcement ID from the embed (we'll add this when posting)
-                announcement_id = None
-                if interaction.message and interaction.message.embeds:
-                    embed = interaction.message.embeds[0]
-                    # Look for announcement ID in the footer or add it
-                    if hasattr(embed, 'footer') and embed.footer and embed.footer.text:
-                        footer_parts = embed.footer.text.split('ID:')
-                        if len(footer_parts) > 1:
-                            announcement_id = footer_parts[1].strip().split(' ')[0]
-                
-                if announcement_id:
-                    await random_announcer.store_feedback(
-                        announcement_id, 
-                        interaction.user.id, 
-                        interaction.user.display_name, 
-                        feedback_type, 
-                        self.personality
-                    )
-                    logger.info(f"📊 Stored feedback: {feedback_type} for {self.personality} from {interaction.user}")
-                else:
-                    logger.warning("⚠️ Could not find announcement ID for feedback storage")
-            
-            # Create feedback embed
-            feedback_embed = discord.Embed(
-                title=f"{emoji} Feedback Recorded!",
-                description=f"Thank you for rating the **{self.personality.replace('_', ' ').title()}** personality!",
-                color=discord.Color.green(),
-                timestamp=discord.utils.utcnow()
-            )
-            
-            feedback_embed.add_field(
-                name="Your Rating",
-                value=f"{emoji} {feedback_type.title()}",
-                inline=True
-            )
-            
-            feedback_embed.add_field(
-                name="Personality",
-                value=self.personality.replace('_', ' ').title(),
-                inline=True
-            )
-            
-            feedback_embed.add_field(
-                name="Help Us Improve",
-                value="Your feedback helps train Ino to make better announcements!",
-                inline=False
-            )
-            
-            await interaction.followup.send(embed=feedback_embed, ephemeral=True)
-            
-        except Exception as e:
-            logger.error(f"Error handling feedback: {e}")
-            await interaction.followup.send("❌ Error recording feedback!", ephemeral=True)
 
 class RandomAnnouncer:
     """Random announcement system for testing Ino personality variations"""
@@ -183,8 +95,6 @@ class RandomAnnouncer:
         self.feedback_collection = None
         self._init_ai_collections()
         
-        # Register persistent views
-        self._register_persistent_views()
     
     def _init_ai_collections(self):
         """Initialize MongoDB collections for AI announcements and feedback"""
@@ -211,17 +121,6 @@ class RandomAnnouncer:
                 logger.warning("⚠️ No MongoDB connection available - AI data will not be stored")
         except Exception as e:
             logger.error(f"❌ Failed to initialize AI collections: {e}")
-    
-    def _register_persistent_views(self):
-        """Register persistent views with the bot for button interactions"""
-        try:
-            # Add a dummy view to register the persistent view class
-            # This ensures Discord knows how to handle the custom_id callbacks
-            dummy_view = PersonalityFeedbackView("standard", {})
-            self.bot.add_view(dummy_view)
-            logger.info("✅ Persistent views registered for feedback buttons")
-        except Exception as e:
-            logger.error(f"❌ Failed to register persistent views: {e}")
     
     async def store_ai_announcement(self, announcement: str, personality: str, video: Dict[str, Any], is_ai_generated: bool = True) -> Optional[str]:
         """Store AI announcement in database for fine-tuning"""
@@ -303,37 +202,7 @@ class RandomAnnouncer:
             logger.error(f"❌ Error storing feedback: {e}")
             return False
         
-    def start_announcements(self):
-        """Start the random announcement task"""
-        if not self.random_announcement_task.is_running():
-            self.random_announcement_task.start()
-            logger.info("Random announcements started")
-    
-    def stop_announcements(self):
-        """Stop the random announcement task"""
-        if self.random_announcement_task.is_running():
-            self.random_announcement_task.cancel()
-            logger.info("Random announcements stopped")
-    
-    @tasks.loop(minutes=15)
-    async def random_announcement_task(self):
-        """Task that runs random announcements"""
-        try:
-            # Choose a random personality
-            personality = random.choice(list(self.personality_variations.keys()))
-            
-            # Get a random video from test channels
-            video = await self.get_random_test_video()
-            if not video:
-                logger.warning("No test video found for random announcement")
-                return
-            
-            # Generate and post announcement
-            announcement = await self.generate_ino_announcement(video, personality)
-            if announcement:
-                await self.post_announcement(announcement, personality, video)
-        except Exception as e:
-            logger.error(f"Error in random announcement task: {e}")
+
     
     async def get_random_test_video(self) -> Optional[Dict[str, Any]]:
         """Get a random video from one of the test channels"""
@@ -626,7 +495,7 @@ EXAMPLES:
 """
     
     async def post_announcement(self, announcement: str, personality: str, video: Dict[str, Any]):
-        """Post the test announcement to Discord channels"""
+        """Post announcement to Discord channels"""
         try:
             if not self.bot.guilds:
                 logger.warning("No guilds available for announcements")
@@ -643,154 +512,31 @@ EXAMPLES:
                 logger.warning(f"Configured guild {Config.GUILD_ID} not found")
                 return
             
-            # Post to specific test channel for random announcements
-            test_channel_id = 1387426943745654906
-            channel = guild.get_channel(test_channel_id)
-            if channel and isinstance(channel, discord.TextChannel):
+            # Post to main announcement channel
+            # Find the appropriate channel for announcements
+            announcement_channel = None
+            for channel in guild.channels:
+                if isinstance(channel, discord.TextChannel) and "announcement" in channel.name.lower():
+                    announcement_channel = channel
+                    break
+            
+            if announcement_channel:
                 try:
-                    # Get video info for enhanced embed
-                    video_title = video.get('title', 'Unknown Video')
-                    video_author = video.get('author', 'Unknown')
-                    video_link = video.get('link', '')
-                    channel_id = video.get('test_channel_id', '')
-                    
-                    # Get channel name for display
-                    channel_names = {
-                        "UCmgf8DJrAXFnU7j3u0kklUQ": "Blue Archive",
-                        "UCdBK94H6oZT2Q7l0-b0xmMg": "ShortCircuit", 
-                        "UChhMeymAOC5PNbbnqxD_w4g": "Just Rayen",
-                        "UCAn8HtI94JPEgO87tCg6dww": "pikachubolk",
-                        "UCSpFnDQr88xCZ80N-X7t0nQ": "Corridor Crew",
-                        "UCT9qsTmZ0dItDHp22Pw_Ezg": "SchizoDev",
-                        "UCLHmLrj4pHHg3-iBJn_CqxA": "Neuro-sama",
-                        "UCtMVHI3AJD4Qk4hcbZnI9ZQ": "SomeOrdinaryGamers",
-                        "UCHL9bfHTxCMi-7vfxQ-AYtg": "Abroad In Japan"
-                    }
-                    channel_name = channel_names.get(channel_id, "Unknown Channel")
-                    
-                    # Create enhanced embed
-                    embed = discord.Embed(
-                        title="🎭 Ino Personality Research",
-                        description=f"## {announcement}\n\n*Testing AI personality variations for optimal video announcements*",
-                        color=self._get_personality_color(personality),
-                        timestamp=discord.utils.utcnow()
-                    )
-                    
-                    # Add personality info with emoji
-                    personality_emojis = {
-                        'standard': '⚖️',
-                        'extra_teasing': '😏', 
-                        'more_caring': '💖',
-                        'formal_shrine': '⛩️',
-                        'exasperated': '😤'
-                    }
-                    personality_emoji = personality_emojis.get(personality, '🎭')
-                    
-                    embed.add_field(
-                        name=f"{personality_emoji} Personality Mode",
-                        value=f"**{personality.replace('_', ' ').title()}**\n{self.personality_variations[personality]['description']}",
-                        inline=True
-                    )
-                    
-                    # Add video source info
-                    embed.add_field(
-                        name="📺 Test Video Source",
-                        value=f"**Channel:** {channel_name}\n**Author:** {video_author}",
-                        inline=True
-                    )
-                    
-                    # Add feedback instructions
-                    embed.add_field(
-                        name="🗳️ Rate This Announcement",
-                        value="👍 Good • 👎 Needs Work • ❤️ Love It • 😴 Too Boring",
-                        inline=False
-                    )
-                    
-                    # Add video title as clickable link
-                    if video_link:
-                        embed.add_field(
-                            name="🎬 Source Video",
-                            value=f"[{video_title[:80]}{'...' if len(video_title) > 80 else ''}]({video_link})",
-                            inline=False
-                        )
-                    
-                    embed.set_author(
-                        name=f"Ino - {personality.replace('_', ' ').title()} Mode",
-                        icon_url=self.bot.user.display_avatar.url if self.bot.user else None
-                    )
-                    embed.set_footer(
-                        text="🔬 Research Data • Help improve Ino's announcements • React below!"
-                    )
-                    
-                    # Store announcement in database first
-                    announcement_id = await self.store_ai_announcement(announcement, personality, video, True)
-                    
-                    # Update embed footer with announcement ID for feedback tracking
-                    if announcement_id:
-                        embed.set_footer(
-                            text=f"🔬 Research Data • Help improve Ino's announcements • ID: {announcement_id}"
-                        )
-                    
-                    # Create the modern UI view with persistent buttons
-                    view = PersonalityFeedbackView(personality, video)
-                    
-                    # Send the announcement with modern Discord UI
-                    message = await channel.send(embed=embed, view=view)
-                    
-                    posted_count = 1
-                    logger.info(f"Posted {personality} test announcement to #{channel.name} (DB ID: {announcement_id})")
+                    # Send simple announcement
+                    await announcement_channel.send(announcement)
+                    logger.info(f"Posted announcement to #{announcement_channel.name}")
                     
                 except discord.Forbidden:
-                    logger.warning(f"No permission to post in #{channel.name}")
+                    logger.warning(f"No permission to post in #{announcement_channel.name}")
                 except discord.HTTPException as e:
-                    logger.error(f"Failed to post announcement in #{channel.name}: {e}")
+                    logger.error(f"Failed to post announcement in #{announcement_channel.name}: {e}")
                 except Exception as e:
-                    logger.error(f"Unexpected error posting to #{channel.name}: {e}")
+                    logger.error(f"Unexpected error posting to #{announcement_channel.name}: {e}")
             else:
-                logger.warning(f"Test channel {test_channel_id} not found or not accessible")
-                posted_count = 0
-            
-            if posted_count > 0:
-                logger.info(f"Successfully posted {personality} test announcement to {posted_count} channels")
-            else:
-                logger.warning("Failed to post test announcement to any channels")
+                logger.warning("No announcement channel found")
                 
         except Exception as e:
             logger.error(f"Error in post_announcement: {e}")
-    
-    def _get_personality_color(self, personality: str) -> discord.Color:
-        """Get color for personality type"""
-        colors = {
-            'standard': discord.Color.blue(),
-            'extra_teasing': discord.Color.purple(),
-            'more_caring': discord.Color.green(),
-            'formal_shrine': discord.Color.gold(),
-            'exasperated': discord.Color.red()
-        }
-        return colors.get(personality, discord.Color.light_grey())
-    
-    async def post_startup_announcement(self):
-        """Post a test announcement when the bot starts up"""
-        try:
-            # Wait a bit for the bot to be fully ready
-            await asyncio.sleep(5)
-            
-            # Choose a random personality for startup test
-            personality = random.choice(list(self.personality_variations.keys()))
-            
-            # Get a random test video
-            video = await self.get_random_test_video()
-            if not video:
-                logger.warning("No test video available for startup announcement")
-                return
-            
-            # Generate and post startup test announcement
-            announcement = await self.generate_ino_announcement(video, personality)
-            if announcement:
-                await self.post_announcement(announcement, personality, video)
-                logger.info(f"Posted startup test announcement with {personality} personality")
-        except Exception as e:
-            logger.error(f"Error posting startup test announcement: {e}")
     
     async def get_feedback_stats(self, days: int = 7) -> Dict[str, Dict[str, int]]:
         """Get feedback statistics for the last N days from database"""
