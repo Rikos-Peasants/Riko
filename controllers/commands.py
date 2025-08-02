@@ -2119,16 +2119,71 @@ class CommandsController:
                     if log_channel and log_channel != ctx.channel:
                         await log_channel.send(embed=embed)
                 
-                # Clean up the moderation view if it exists
-                if hasattr(self.bot, 'moderation_view_manager') and self.bot.moderation_view_manager:
-                    view = self.bot.moderation_view_manager.get_view(message_id)
-                    if view:
-                        view.processed = True
-                        # Disable all buttons in the view
-                        for item in view.children:
-                            item.disabled = True
-                        # Remove from manager
-                        self.bot.moderation_view_manager.remove_view(message_id)
+                # Edit the original review message to show overrule status
+                review_message_id = log_data.get('review_message_id')
+                review_channel_id = log_data.get('review_channel_id')
+                
+                if review_message_id and review_channel_id:
+                    try:
+                        review_channel = ctx.guild.get_channel(int(review_channel_id))
+                        if review_channel:
+                            review_message = await review_channel.fetch_message(int(review_message_id))
+                            
+                            # Get the original embed and modify it
+                            if review_message.embeds:
+                                original_embed = review_message.embeds[0]
+                                
+                                # Update embed to show overrule status
+                                if is_allowed:
+                                    original_embed.color = discord.Color.green()
+                                    original_embed.title = "✅ Content Overruled - APPROVED"
+                                else:
+                                    original_embed.color = discord.Color.red()
+                                    original_embed.title = "❌ Content Overruled - REJECTED"
+                                
+                                # Add overrule information
+                                original_embed.add_field(
+                                    name="⚖️ Admin Override",
+                                    value=f"**Admin:** {ctx.author.mention}\n**Decision:** {'APPROVED' if is_allowed else 'REJECTED'}\n**Reason:** {reason}",
+                                    inline=False
+                                )
+                                
+                                original_embed.set_footer(text=f"Overruled by {ctx.author.display_name} at {discord.utils.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC")
+                                
+                                # Create disabled view
+                                disabled_view = None
+                                if hasattr(self.bot, 'moderation_view_manager') and self.bot.moderation_view_manager:
+                                    view = self.bot.moderation_view_manager.get_view(message_id)
+                                    if view:
+                                        view.processed = True
+                                        # Disable all buttons in the view
+                                        for item in view.children:
+                                            item.disabled = True
+                                        disabled_view = view
+                                        # Remove from manager
+                                        self.bot.moderation_view_manager.remove_view(message_id)
+                                
+                                # Edit the review message
+                                await review_message.edit(embed=original_embed, view=disabled_view)
+                                logger.info(f"Updated review message {review_message_id} to show overrule status")
+                    
+                    except discord.NotFound:
+                        logger.warning(f"Review message {review_message_id} not found, may have been deleted")
+                    except discord.Forbidden:
+                        logger.warning("Missing permission to edit review message")
+                    except Exception as e:
+                        logger.error(f"Error editing review message: {e}")
+                else:
+                    # Fallback: Clean up the moderation view if it exists (for older entries without review_message_id)
+                    if hasattr(self.bot, 'moderation_view_manager') and self.bot.moderation_view_manager:
+                        view = self.bot.moderation_view_manager.get_view(message_id)
+                        if view:
+                            view.processed = True
+                            # Disable all buttons in the view
+                            for item in view.children:
+                                item.disabled = True
+                            # Remove from manager
+                            self.bot.moderation_view_manager.remove_view(message_id)
                 
                 logger.info(f"Admin overrule by {ctx.author.display_name}: message {message_id} -> {'allowed' if is_allowed else 'denied'}")
                 
@@ -3187,7 +3242,9 @@ class CommandsController:
                 embed.add_field(name="/purge media [amount]", value="Delete messages with attachments/images", inline=False)
                 embed.add_field(name="/purge embeds [amount]", value="Delete messages with embeds", inline=False)
                 embed.add_field(name="/purge all [amount]", value="Delete all messages", inline=False)
-                embed.set_footer(text="Amount defaults to 100, max 1000")
+                embed.add_field(name="/purge user @user [amount] [reason]", value="Delete messages from specific user (Admin only)", inline=False)
+                embed.add_field(name="/purge contains text [amount:100] [reason:text]", value="Delete messages containing text (Admin only)", inline=False)
+                embed.set_footer(text="Amount defaults to 100, max 1000 • Admin commands require administrator permissions")
                 await ctx.send(embed=embed, ephemeral=True)
         
         @purge_group.command(name='humans', description='Delete messages from human users only')
@@ -3217,6 +3274,252 @@ class CommandsController:
         async def purge_all_cmd(ctx, amount: int = 100):
             """Delete all messages regardless of type"""
             await self._execute_purge(ctx, lambda msg: True, amount, "all")
+
+        @purge_group.command(name='user', description='Delete messages from a specific user')
+        async def purge_user_cmd(ctx, user: discord.Member, amount: int = 100, *, reason: str = "Admin purge"):
+            """Delete messages from a specific user"""
+            try:
+                if hasattr(ctx, 'defer'):
+                    await ctx.defer()
+                
+                # Check if user has admin permissions
+                if not (await ctx.bot.is_owner(ctx.author) or ctx.author.guild_permissions.administrator):
+                    error_msg = "❌ You need administrator permissions to use this command."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Validate guild
+                if not ctx.guild or ctx.guild.id != Config.GUILD_ID:
+                    error_msg = "This command can only be used in the configured guild."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Validate amount
+                if amount > 1000:
+                    error_msg = "Amount cannot exceed 1000 messages."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                if amount < 1:
+                    error_msg = "Amount must be at least 1."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Check permissions
+                if not ctx.channel.permissions_for(ctx.guild.me).manage_messages:
+                    error_msg = "I don't have permission to delete messages in this channel."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Purge messages from the user
+                def check(message):
+                    return message.author.id == user.id
+                
+                try:
+                    deleted = await ctx.channel.purge(limit=amount, check=check, reason=f"Purge by {ctx.author} - {reason}")
+                    deleted_count = len(deleted)
+                    
+                    # Log to moderation channel if available
+                    leaderboard_manager = self.get_leaderboard_manager()
+                    if leaderboard_manager and leaderboard_manager.moderation_manager:
+                        moderation_manager = leaderboard_manager.moderation_manager
+                        log_channel_id = await moderation_manager.get_moderation_log_channel_id(str(ctx.guild.id))
+                        
+                        if log_channel_id:
+                            log_channel = ctx.guild.get_channel(log_channel_id)
+                            if log_channel:
+                                log_embed = discord.Embed(
+                                    title="🧹 User Purge",
+                                    color=discord.Color.orange(),
+                                    timestamp=discord.utils.utcnow()
+                                )
+                                log_embed.add_field(name="👤 Target User", value=f"{user.mention}\n`{user.display_name}` ({user.id})", inline=True)
+                                log_embed.add_field(name="🗑️ Messages Deleted", value=str(deleted_count), inline=True)
+                                log_embed.add_field(name="📍 Channel", value=ctx.channel.mention, inline=True)
+                                log_embed.add_field(name="👮 Moderator", value=f"{ctx.author.mention}\n`{ctx.author.display_name}`", inline=True)
+                                log_embed.add_field(name="📝 Reason", value=reason, inline=True)
+                                
+                                await log_channel.send(embed=log_embed)
+                    
+                    response = f"✅ **Purge Complete**\nDeleted **{deleted_count}** messages from {user.mention} in {ctx.channel.mention}"
+                    
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(response, ephemeral=True)
+                    else:
+                        await ctx.send(response)
+                    
+                    logger.info(f"Purged {deleted_count} messages from {user.display_name} in {ctx.channel.name} by {ctx.author.display_name}")
+                    
+                except discord.Forbidden:
+                    error_msg = "I don't have permission to delete messages."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                
+            except Exception as e:
+                from views.embeds import EmbedViews
+                error_embed = EmbedViews.error_embed(f"Failed to purge user messages: {str(e)}")
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(embed=error_embed, ephemeral=True)
+                else:
+                    await ctx.send(embed=error_embed)
+
+        @purge_group.command(name='contains', description='Delete messages containing specific text')
+        async def purge_contains_cmd(ctx, *, search_text: str):
+            """Delete messages containing specific text"""
+            try:
+                if hasattr(ctx, 'defer'):
+                    await ctx.defer()
+                
+                # Check if user has admin permissions
+                if not (await ctx.bot.is_owner(ctx.author) or ctx.author.guild_permissions.administrator):
+                    error_msg = "❌ You need administrator permissions to use this command."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Validate guild
+                if not ctx.guild or ctx.guild.id != Config.GUILD_ID:
+                    error_msg = "This command can only be used in the configured guild."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Parse search_text to extract amount and reason if provided in the format
+                # "/purge contains text amount:100 reason:spam"
+                parts = search_text.split()
+                actual_search_text = search_text
+                amount = 100  # default
+                reason = "Admin purge"  # default
+                
+                # Look for amount: and reason: parameters in the text
+                remaining_parts = []
+                i = 0
+                while i < len(parts):
+                    part = parts[i]
+                    if part.startswith('amount:'):
+                        try:
+                            amount = int(part[7:])
+                        except ValueError:
+                            remaining_parts.append(part)
+                    elif part.startswith('reason:'):
+                        reason = ' '.join(parts[i:])[7:]  # Everything after "reason:"
+                        break
+                    else:
+                        remaining_parts.append(part)
+                    i += 1
+                
+                actual_search_text = ' '.join(remaining_parts)
+                
+                if not actual_search_text.strip():
+                    error_msg = "Search text cannot be empty."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Validate amount
+                if amount > 1000:
+                    error_msg = "Amount cannot exceed 1000 messages."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                if amount < 1:
+                    error_msg = "Amount must be at least 1."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Check permissions
+                if not ctx.channel.permissions_for(ctx.guild.me).manage_messages:
+                    error_msg = "I don't have permission to delete messages in this channel."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Purge messages containing the text (case-insensitive)
+                def check(message):
+                    return actual_search_text.lower() in message.content.lower()
+                
+                try:
+                    deleted = await ctx.channel.purge(limit=amount, check=check, reason=f"Purge by {ctx.author} - {reason}")
+                    deleted_count = len(deleted)
+                    
+                    # Log to moderation channel if available
+                    leaderboard_manager = self.get_leaderboard_manager()
+                    if leaderboard_manager and leaderboard_manager.moderation_manager:
+                        moderation_manager = leaderboard_manager.moderation_manager
+                        log_channel_id = await moderation_manager.get_moderation_log_channel_id(str(ctx.guild.id))
+                        
+                        if log_channel_id:
+                            log_channel = ctx.guild.get_channel(log_channel_id)
+                            if log_channel:
+                                log_embed = discord.Embed(
+                                    title="🧹 Content Purge",
+                                    color=discord.Color.orange(),
+                                    timestamp=discord.utils.utcnow()
+                                )
+                                log_embed.add_field(name="🔍 Search Text", value=f"`{actual_search_text}`", inline=True)
+                                log_embed.add_field(name="🗑️ Messages Deleted", value=str(deleted_count), inline=True)
+                                log_embed.add_field(name="📍 Channel", value=ctx.channel.mention, inline=True)
+                                log_embed.add_field(name="👮 Moderator", value=f"{ctx.author.mention}\n`{ctx.author.display_name}`", inline=True)
+                                log_embed.add_field(name="📝 Reason", value=reason, inline=True)
+                                
+                                await log_channel.send(embed=log_embed)
+                    
+                    # Truncate search text for display if too long
+                    display_text = actual_search_text[:50] + "..." if len(actual_search_text) > 50 else actual_search_text
+                    response = f"✅ **Purge Complete**\nDeleted **{deleted_count}** messages containing `{display_text}` in {ctx.channel.mention}"
+                    
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(response, ephemeral=True)
+                    else:
+                        await ctx.send(response)
+                    
+                    logger.info(f"Purged {deleted_count} messages containing '{actual_search_text}' in {ctx.channel.name} by {ctx.author.display_name}")
+                    
+                except discord.Forbidden:
+                    error_msg = "I don't have permission to delete messages."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                
+            except Exception as e:
+                from views.embeds import EmbedViews
+                error_embed = EmbedViews.error_embed(f"Failed to purge messages: {str(e)}")
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(embed=error_embed, ephemeral=True)
+                else:
+                    await ctx.send(embed=error_embed)
 
         # WELCOME/LEAVE SYSTEM COMMANDS
         @self.bot.hybrid_group(name='greet', description='Manage welcome and leave messages')

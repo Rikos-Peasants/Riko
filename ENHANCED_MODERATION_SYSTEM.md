@@ -100,13 +100,51 @@ When content is flagged, staff see an interactive panel with:
 /setlogchannel moderation #channel  # Set moderation logs
 /setlogchannel warnings #channel    # Set warning logs
 
-# Admin overrule (enhanced)
+# Admin overrule (enhanced with embed editing)
 /overrule id:123456 isAllowed:true reason:"False positive - whitelisting"
 
 # Statistics
 /modstats                          # Show moderation statistics
 /modstats 7                        # Show last 7 days stats
+
+# Bulk Moderation Actions (Purge Group Commands)
+/purge user @username 50           # Delete 50 messages from user
+/purge user @username 100 reason:"Spam cleanup"  # With custom reason
+/purge contains "spam text"        # Delete messages containing text
+/purge contains "bad word" amount:200 reason:"Content cleanup"  # Advanced usage
 ```
+
+### **Bulk Moderation Tools**
+
+#### **Purge User Messages**
+```bash
+/purge user @spammer                 # Delete last 100 messages from user (default)
+/purge user @spammer 50              # Delete last 50 messages from user
+/purge user @spammer 200 reason:"Account compromised"  # With custom reason
+```
+
+#### **Purge by Content**
+```bash
+/purge contains "spam link"          # Delete messages containing "spam link"
+/purge contains "discord.gg" amount:500 reason:"Link spam cleanup"  # Advanced usage
+```
+
+**Features:**
+- ✅ **Command Group Structure**: Part of `/purge` group with subcommands
+- ✅ **Permission Checks**: Admin commands require administrator permissions
+- ✅ **Comprehensive Logging**: All purge actions logged to moderation channel
+- ✅ **Flexible Limits**: 1-1000 message limit per operation
+- ✅ **Case-Insensitive Search**: Content matching ignores case
+- ✅ **Detailed Audit Trail**: Shows moderator, reason, and affected count
+
+**Available Purge Commands:**
+- `/purge humans` - Delete messages from human users only
+- `/purge bots` - Delete messages from bots only  
+- `/purge media` - Delete messages with attachments/images
+- `/purge embeds` - Delete messages with embeds
+- `/purge all` - Delete all messages
+- `/purge user` - Delete messages from specific user (Admin only)
+- `/purge contains` - Delete messages containing text (Admin only)
 
 ### **Statistics Dashboard**
 ```
@@ -131,7 +169,7 @@ User posts message → OpenAI scans → Decision tree:
 ├── Clean content → ✅ Allow silently
 ├── Whitelisted pattern → ✅ Auto-approve  
 ├── Blacklisted pattern → ❌ Auto-delete + log
-└── New flagged content → 🔔 Send to staff review
+└── New flagged content → 🗑️ Delete original + 🔔 Send to staff review
 ```
 
 ### **2. Staff Review Process**
@@ -149,14 +187,135 @@ Vote threshold reached → Automatic decision:
 ├── 2+ Whitelist (no majority blacklist) → ✅ Auto-whitelist
 ├── Majority blacklist → ❌ Auto-blacklist
 ├── Tie with 4+ votes → ⏳ Admin intervention needed
-└── Admin /overrule → 👑 Override all votes
+└── Admin /overrule → 👑 Override all votes + Edit original message
+```
+
+### **3.1. Enhanced Overrule System**
+When an admin uses `/overrule`, the system now:
+- ✅ **Updates Database** - Changes the decision in the moderation log
+- ✅ **Edits Original Embed** - Modifies the flagged review message to show overrule status
+- ✅ **Disables Buttons** - Prevents further voting on overruled content
+- ✅ **Visual Feedback** - Changes embed color (green for approved, red for rejected)
+- ✅ **Admin Attribution** - Shows who made the overrule and when
+
+### **4. Enhanced Content Similarity Detection**
+```
+Similar content posted later → Advanced similarity checking:
+├── Exact hash match → ✅/❌ Instant decision
+├── Normalized variant match → ✅/❌ Fast recognition  
+├── Fuzzy similarity match (85%+) → ✅/❌ Smart detection
+└── No similar content found → 🔄 Full review workflow
+```
+
+**Advanced Detection Features:**
+- ✅ **Text Normalization** - Removes punctuation, spaces, case differences
+- ✅ **Bypass Prevention** - Detects common evasion techniques (l33t speak, extra characters)
+- ✅ **Multiple Hash Variants** - Stores normalized versions for fast lookup
+- ✅ **Fuzzy Matching** - Uses similarity algorithms to catch minor variations
+- ✅ **Recent Content Scanning** - Checks against last 1000 decisions for performance
+
+**Example Detections:**
+- `"That's too gay.."` ↔ `"That's too gay..m"` → **85%+ similarity detected**
+- `"th4ts g4y"` ↔ `"thats gay"` → **Normalized variant match**
+- `"t h a t s   g a y"` ↔ `"thats gay"` → **Spacing normalization match**
+
+### **4.1. Technical Implementation**
+
+#### **Content Normalization Process**
+1. **Convert to lowercase** - Remove case sensitivity
+2. **Remove URLs, mentions** - Strip Discord-specific elements
+3. **Remove excessive punctuation** - Keep only alphanumeric and spaces
+4. **Normalize whitespace** - Single spaces, trim edges
+5. **Remove repeated characters** - "aaa" becomes "a"
+
+#### **Variant Generation**
+- **Base normalized** - Standard cleaned version
+- **No spaces** - Remove all spacing
+- **No vowels** - Common obfuscation technique
+- **Leet speak fixes** - Replace numbers/symbols with letters
+- **Alpha-only** - Letters and numbers only
+
+#### **Smart Lookup Process**
+```
+New flagged content → Generate variants → Check exact matches
+                                       ↓ (if no matches)
+                    Recent decisions ← Fuzzy similarity (85% threshold)
+                                       ↓ (if match found)
+                        Apply previous decision automatically
+```
+
+**Performance Optimizations:**
+- ✅ **Multiple hash storage** for O(1) exact lookups
+- ✅ **Limited fuzzy scanning** (1000 recent decisions max)  
+- ✅ **Variant caching** to avoid regeneration
+- ✅ **Similarity threshold** tuning for accuracy vs performance
+
+### **4.2. Real-World Example**
+
+#### **Scenario: User Tries to Bypass Detection**
+1. **First message**: `"That's too gay.."` → Flagged by OpenAI → Community votes to blacklist
+2. **System stores**:
+   - Primary hash: `hash("thats too gay")`
+   - Variants: `hash("thatstoogay")`, `hash("thts t gy")`, etc.
+   - Original content: `"That's too gay.."` for fuzzy matching
+
+3. **Second message**: `"That's too gay..m"` → Flagged by OpenAI → System checks:
+   - ❌ Exact hash match? No
+   - ❌ Variant hash match? No  
+   - ✅ Fuzzy similarity? **87% match** with previous blacklisted content
+   - 🚫 **Auto-blacklist applied** - No staff review needed!
+
+4. **Result**: User's bypass attempt is automatically caught and blocked
+
+#### **Before Enhancement:**
+- `"That's too gay.."` → `hash("that's too gay..")` = `123456`
+- `"That's too gay..m"` → `hash("that's too gay..m")` = `789012`  
+- ❌ **Different hashes** → No detection → Bypass successful
+
+#### **After Enhancement:**
+- Both messages normalize to similar patterns
+- Multiple variants stored and checked
+- Fuzzy matching catches 87% similarity  
+- ✅ **Bypass prevented** → Consistent enforcement
+
+### **Visual Examples**
+
+#### **Overruled Embed Appearance**
+When an admin overrules a decision, the original flagged embed transforms:
+
+**Before Overrule:**
+```
+🚨 Content Flagged for Review
+┌─────────────────────────────────────┐
+│ ⚠️ Content Flagged for Review       │
+│ 👤 Author: @Username                │
+│ 📍 Channel: #channel-name           │
+│ 🗳️ Current Votes: 1 Whitelist, 1 Blacklist │
+│ [✅ Whitelist] [❌ Blacklist] [📊 Info] │
+└─────────────────────────────────────┘
+```
+
+**After Admin Approval:**
+```
+✅ Content Overruled - APPROVED
+┌─────────────────────────────────────┐
+│ ✅ Content Overruled - APPROVED     │
+│ 👤 Author: @Username                │
+│ 📍 Channel: #channel-name           │
+│ ⚖️ Admin Override:                  │
+│   Admin: @AdminName                 │
+│   Decision: APPROVED                │
+│   Reason: False positive            │
+│ [✅ Whitelist] [❌ Blacklist] [📊 Info] │ (All disabled)
+└─────────────────────────────────────┘
+Overruled by AdminName at 2024-01-01 12:00:00 UTC
 ```
 
 ## 🗂️ Database Schema
 
 ### **Enhanced Collections**
 ```javascript
-// Moderation Logs
+// Moderation Logs (Enhanced)
 {
   message_id: "123456789",
   guild_id: "987654321", 
@@ -164,23 +323,44 @@ Vote threshold reached → Automatic decision:
   content_hash: 123456,
   categories: { harassment: true, hate: false },
   category_scores: { harassment: 0.85, hate: 0.23 },
-  status: "pending_review|approved|rejected|blacklisted",
+  status: "pending_review|approved|rejected|blacklisted|overruled_approved|overruled_rejected",
+  
+  // New fields for review message tracking
+  review_message_id: "987654321",     // ID of the flagged embed message
+  review_channel_id: "111222333",     // Channel containing the review message
+  
+  // Voting data
   votes: {
     whitelist: ["user1", "user2"],
-    blacklist: ["user3"]
+    blacklist: ["user3"] 
   },
+  
+  // Processing information
   processed_by: "community_vote|admin_overrule",
+  
+  // Overrule data (when admin overrules)
+  overrule_admin_id: "456789",
+  overrule_admin_name: "AdminName",
+  overrule_reason: "False positive",
+  overruled_at: Date,
+  
+  // Timestamps
   created_at: Date,
-  reviewed_at: Date
+  reviewed_at: Date,
+  updated_at: Date
 }
 
-// Moderation Decisions (Whitelist/Blacklist)
+// Moderation Decisions (Enhanced with Similarity Detection)
 {
-  content_hash: 123456,
+  content_hash: 123456,                    // Primary hash
+  hash_variants: [123456, 789012, 345678], // All normalized variants
+  original_content: "That's too gay..",    // Original text for fuzzy matching
   decision: "whitelist|blacklist",
   moderator_id: "123",
-  moderator_name: "Staff Member",
+  moderator_name: "Staff Member", 
   reason: "Community voted to whitelist",
+  is_variant: false,                       // true for variant entries
+  primary_hash: 123456,                    // Reference to primary (for variants)
   created_at: Date
 }
 

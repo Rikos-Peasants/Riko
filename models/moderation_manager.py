@@ -1,11 +1,14 @@
 import os
 import asyncio
 import logging
+import re
+import string
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Set
 import aiohttp
 import discord
 from pymongo import MongoClient, DESCENDING
+from difflib import SequenceMatcher
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +57,105 @@ class ModerationManager:
         except Exception as e:
             logger.error(f"Error creating moderation indexes: {e}")
     
+    def _normalize_content(self, content: str) -> str:
+        """Normalize content for better similarity detection"""
+        # Convert to lowercase
+        normalized = content.lower()
+        
+        # Remove URLs, mentions, and channel references
+        normalized = re.sub(r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+', '', normalized)
+        normalized = re.sub(r'<@[!&]?[0-9]+>', '', normalized)  # Remove mentions
+        normalized = re.sub(r'<#[0-9]+>', '', normalized)  # Remove channel references
+        normalized = re.sub(r'<:[a-zA-Z0-9_]+:[0-9]+>', '', normalized)  # Remove custom emojis
+        
+        # Remove excessive punctuation and special characters
+        normalized = re.sub(r'[^\w\s]', '', normalized)  # Keep only alphanumeric and spaces
+        
+        # Remove excessive whitespace and normalize spacing
+        normalized = re.sub(r'\s+', ' ', normalized).strip()
+        
+        # Remove common filler characters that users add to bypass detection
+        normalized = re.sub(r'(.)\1{2,}', r'\1', normalized)  # Remove repeated characters (aaa -> a)
+        
+        return normalized
+    
+    def _generate_content_variants(self, content: str) -> Set[str]:
+        """Generate multiple variants of content for hash checking"""
+        variants = set()
+        
+        # Base normalized version
+        normalized = self._normalize_content(content)
+        variants.add(normalized)
+        
+        # Remove all spaces
+        variants.add(normalized.replace(' ', ''))
+        
+        # Remove all vowels (common obfuscation technique)
+        no_vowels = re.sub(r'[aeiou]', '', normalized)
+        if no_vowels and no_vowels != normalized:
+            variants.add(no_vowels)
+        
+        # Replace common letter substitutions
+        substitutions = {
+            '0': 'o', '1': 'i', '3': 'e', '4': 'a', '5': 's', 
+            '7': 't', '@': 'a', '$': 's', '!': 'i'
+        }
+        leet_normalized = normalized
+        for leet, normal in substitutions.items():
+            leet_normalized = leet_normalized.replace(leet, normal)
+        if leet_normalized != normalized:
+            variants.add(leet_normalized)
+        
+        # Remove only punctuation and spaces, keep letters and numbers
+        alpha_only = re.sub(r'[^a-zA-Z0-9]', '', content.lower())
+        if alpha_only and len(alpha_only) > 2:
+            variants.add(alpha_only)
+        
+        return variants
+    
+    def _calculate_similarity(self, text1: str, text2: str) -> float:
+        """Calculate similarity between two texts using SequenceMatcher"""
+        return SequenceMatcher(None, text1, text2).ratio()
+    
+    async def _check_similar_decisions(self, content: str, similarity_threshold: float = 0.85) -> Optional[Dict]:
+        """Check for existing decisions on similar content"""
+        try:
+            # Generate variants of the current content
+            content_variants = self._generate_content_variants(content)
+            
+            # First, check for exact hash matches on any variant
+            for variant in content_variants:
+                variant_hash = hash(variant)
+                existing_decision = await self.get_moderation_decision(variant_hash)
+                if existing_decision:
+                    logger.info(f"Found exact hash match for content variant: '{variant}'")
+                    return existing_decision
+            
+            # If no exact matches, check for fuzzy similarity on recent decisions
+            # Get recent decisions for fuzzy matching (last 1000 to avoid performance issues)
+            recent_decisions = list(self.moderation_decisions_collection.find({}).sort("created_at", -1).limit(1000))
+            
+            normalized_content = self._normalize_content(content)
+            
+            for decision in recent_decisions:
+                # We need to reconstruct the content from logs to compare
+                # For now, we'll store original_content in decisions to enable this
+                decision_content = decision.get('original_content', '')
+                if decision_content:
+                    decision_normalized = self._normalize_content(decision_content)
+                    
+                    # Check similarity
+                    similarity = self._calculate_similarity(normalized_content, decision_normalized)
+                    if similarity >= similarity_threshold:
+                        logger.info(f"Found similar content (similarity: {similarity:.2f}): '{decision_content}' matches '{content}'")
+                        return decision
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error checking similar decisions: {e}")
+            return None
+    
     async def scan_message(self, message: discord.Message) -> Optional[Dict]:
         """
         Scan a message using OpenAI's Moderation API
@@ -96,11 +198,13 @@ class ModerationManager:
                     
                     # Check if content was flagged
                     if moderation_result.get('flagged', False):
-                        # Get content hash for caching decisions
-                        content_hash = hash(clean_content.lower())
+                        # Use enhanced similarity detection to check for existing decisions
+                        existing_decision = await self._check_similar_decisions(clean_content)
                         
-                        # Check if we already have a decision for this content
-                        existing_decision = await self.get_moderation_decision(content_hash)
+                        # Generate primary content hash from the best normalized variant
+                        content_variants = self._generate_content_variants(clean_content)
+                        primary_variant = self._normalize_content(clean_content)
+                        content_hash = hash(primary_variant)
                         
                         moderation_data = {
                             "message_id": str(message.id),
@@ -189,11 +293,23 @@ class ModerationManager:
             logger.error(f"Error getting pending moderation logs: {e}")
             return []
     
-    async def store_moderation_decision(self, content_hash: int, decision: str, moderator_id: str, moderator_name: str, reason: str = None) -> bool:
-        """Store moderation decision (whitelist/blacklist)"""
+    async def store_moderation_decision(self, content_hash: int, decision: str, moderator_id: str, moderator_name: str, reason: str = None, original_content: str = None) -> bool:
+        """Store moderation decision (whitelist/blacklist) with enhanced similarity support"""
         try:
+            # Generate multiple hash variants if original content is provided
+            hash_variants = [content_hash]  # Always include the primary hash
+            
+            if original_content:
+                content_variants = self._generate_content_variants(original_content)
+                for variant in content_variants:
+                    variant_hash = hash(variant)
+                    if variant_hash != content_hash:  # Avoid duplicates
+                        hash_variants.append(variant_hash)
+            
             decision_data = {
                 "content_hash": content_hash,
+                "hash_variants": hash_variants,  # Store all hash variants
+                "original_content": original_content or "",  # Store for fuzzy matching
                 "decision": decision,  # "whitelist" or "blacklist"
                 "moderator_id": moderator_id,
                 "moderator_name": moderator_name,
@@ -201,12 +317,30 @@ class ModerationManager:
                 "created_at": datetime.utcnow()
             }
             
+            # Store the primary decision
             self.moderation_decisions_collection.replace_one(
                 {"content_hash": content_hash},
                 decision_data,
                 upsert=True
             )
+            
+            # Store decisions for all hash variants to enable fast lookups
+            for variant_hash in hash_variants:
+                if variant_hash != content_hash:  # Primary already stored above
+                    variant_decision_data = decision_data.copy()
+                    variant_decision_data["content_hash"] = variant_hash
+                    variant_decision_data["is_variant"] = True  # Mark as variant
+                    variant_decision_data["primary_hash"] = content_hash  # Reference to primary
+                    
+                    self.moderation_decisions_collection.replace_one(
+                        {"content_hash": variant_hash},
+                        variant_decision_data,
+                        upsert=True
+                    )
+            
+            logger.info(f"Stored moderation decision for {len(hash_variants)} content variants")
             return True
+            
         except Exception as e:
             logger.error(f"Error storing moderation decision: {e}")
             return False
@@ -240,7 +374,8 @@ class ModerationManager:
                     "whitelist",
                     moderator_id,
                     moderator_name,
-                    "Whitelisted by community/staff vote"
+                    "Whitelisted by community/staff vote",
+                    log_data.get('content', '')
                 )
                 update_data["whitelisted"] = True
             
@@ -272,7 +407,8 @@ class ModerationManager:
                     "blacklist",
                     moderator_id,
                     moderator_name,
-                    reason or "Blacklisted by community/staff vote"
+                    reason or "Blacklisted by community/staff vote",
+                    log_data.get('content', '')
                 )
                 update_data["blacklisted"] = True
             
@@ -303,7 +439,8 @@ class ModerationManager:
                 "whitelist" if is_allowed else "blacklist",
                 admin_id,
                 admin_name,
-                f"Admin overrule: {reason or 'No reason provided'}"
+                f"Admin overrule: {reason or 'No reason provided'}",
+                log_data.get('content', '')
             )
             
             return await self.update_moderation_log(message_id, update_data)

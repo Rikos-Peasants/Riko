@@ -1219,6 +1219,21 @@ Here are some useful resources to help you:
             # Send the review request with buttons
             review_message = await log_channel.send(content=content, embed=embed, view=view)
             
+            # Store the review message ID in the moderation log for future editing
+            await moderation_manager.update_moderation_log(
+                moderation_result['message_id'], 
+                {"review_message_id": str(review_message.id), "review_channel_id": str(log_channel.id)}
+            )
+            
+            # Delete the original message since it's flagged for review
+            try:
+                await message.delete()
+                logger.info(f"Deleted flagged message from {message.author.display_name} for review")
+            except discord.Forbidden:
+                logger.warning("Missing permission to delete flagged message")
+            except discord.NotFound:
+                pass  # Message already deleted
+            
             logger.info(f"Sent moderation review request with UI buttons for message from {message.author.display_name}")
             
         except Exception as e:
