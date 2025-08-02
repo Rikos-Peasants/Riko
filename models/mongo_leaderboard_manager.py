@@ -27,6 +27,7 @@ class MongoLeaderboardManager:
         self.bookmarks_collection = None  # New collection for user bookmarks
         self.user_reactions_collection = None  # New collection for tracking user reactions
         self.help_threads_collection = None  # New collection for help channel threads
+        self.moderation_manager = None  # Moderation manager instance
         self._connect()
     
     def _connect(self):
@@ -83,6 +84,15 @@ class MongoLeaderboardManager:
             self.help_threads_collection.create_index([("created_at", -1)])
             
             logger.info(f"Connected to MongoDB database '{self.database_name}', collections: {self.collection_name}, image_messages, nsfwban_users, warnings, settings, bookmarks, user_reactions, help_threads")
+            
+            # Initialize moderation manager
+            try:
+                from models.moderation_manager import ModerationManager
+                self.moderation_manager = ModerationManager(self.client, self.database_name)
+                logger.info("Moderation manager initialized successfully")
+            except Exception as e:
+                logger.error(f"Failed to initialize moderation manager: {e}")
+                self.moderation_manager = None
             
         except (ConnectionFailure, ServerSelectionTimeoutError) as e:
             logger.error(f"Failed to connect to MongoDB: {e}")

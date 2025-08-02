@@ -746,6 +746,198 @@ class EmbedViews:
         embed.set_footer(text=f"📊 Based on net upvotes (👍 - 👎) • Showing top 10")
         
         return embed 
+    
+    @staticmethod
+    def moderation_flagged_embed(moderation_data: dict) -> discord.Embed:
+        """Create an embed for flagged content requiring review"""
+        embed = discord.Embed(
+            title="⚠️ Content Flagged for Review",
+            description="AI moderation has flagged this content for manual review.",
+            color=discord.Color.orange(),
+            timestamp=datetime.utcnow()
+        )
+        
+        embed.add_field(name="👤 Author", value=f"<@{moderation_data['author_id']}>\n`{moderation_data['author_name']}`", inline=True)
+        embed.add_field(name="📍 Channel", value=f"<#{moderation_data['channel_id']}>", inline=True)
+        embed.add_field(name="🆔 Message ID", value=f"`{moderation_data['message_id']}`", inline=True)
+        
+        # Show flagged categories
+        flagged_categories = []
+        for category, flagged in moderation_data.get('categories', {}).items():
+            if flagged:
+                score = moderation_data.get('category_scores', {}).get(category, 0)
+                flagged_categories.append(f"• **{category.replace('_', ' ').title()}** ({score:.2%})")
+        
+        if flagged_categories:
+            embed.add_field(
+                name="🚨 Flagged Categories", 
+                value="\n".join(flagged_categories), 
+                inline=False
+            )
+        
+        # Show content (truncated if too long)
+        content = moderation_data.get('content', '')
+        if len(content) > 500:
+            content = content[:500] + "..."
+        embed.add_field(name="📝 Content", value=f"```{content}```", inline=False)
+        
+        embed.add_field(name="🔗 Jump to Message", value=f"[Click here]({moderation_data['jump_url']})", inline=True)
+        
+        embed.set_footer(text="React ✅ to approve, ❌ to reject, 📝 to whitelist, 🚫 to blacklist")
+        
+        return embed
+    
+    @staticmethod
+    def moderation_approved_embed(log_data: dict, moderator_name: str, whitelisted: bool = False) -> discord.Embed:
+        """Create an embed for approved content"""
+        title = "✅ Content Approved" + (" & Whitelisted" if whitelisted else "")
+        embed = discord.Embed(
+            title=title,
+            description="The flagged content has been reviewed and approved.",
+            color=discord.Color.green(),
+            timestamp=datetime.utcnow()
+        )
+        
+        embed.add_field(name="👤 Original Author", value=f"<@{log_data['author_id']}>", inline=True)
+        embed.add_field(name="👮 Reviewed by", value=moderator_name, inline=True)
+        embed.add_field(name="🆔 Message ID", value=f"`{log_data['message_id']}`", inline=True)
+        
+        if whitelisted:
+            embed.add_field(name="📝 Note", value="Similar content will be auto-approved in the future.", inline=False)
+        
+        embed.add_field(name="🔗 Jump to Message", value=f"[Click here]({log_data['jump_url']})", inline=False)
+        
+        return embed
+    
+    @staticmethod
+    def moderation_rejected_embed(log_data: dict, moderator_name: str, reason: str, blacklisted: bool = False) -> discord.Embed:
+        """Create an embed for rejected content"""
+        title = "❌ Content Rejected" + (" & Blacklisted" if blacklisted else "")
+        embed = discord.Embed(
+            title=title,
+            description="The flagged content has been reviewed and rejected.",
+            color=discord.Color.red(),
+            timestamp=datetime.utcnow()
+        )
+        
+        embed.add_field(name="👤 Original Author", value=f"<@{log_data['author_id']}>", inline=True)
+        embed.add_field(name="👮 Reviewed by", value=moderator_name, inline=True)
+        embed.add_field(name="🆔 Message ID", value=f"`{log_data['message_id']}`", inline=True)
+        
+        embed.add_field(name="📝 Reason", value=reason, inline=False)
+        
+        if blacklisted:
+            embed.add_field(name="🚫 Note", value="Similar content will be automatically rejected in the future.", inline=False)
+        
+        embed.add_field(name="🔗 Jump to Message", value=f"[Click here]({log_data['jump_url']})", inline=False)
+        
+        return embed
+    
+    @staticmethod
+    def moderation_overruled_embed(log_data: dict, admin_name: str, is_allowed: bool, reason: str) -> discord.Embed:
+        """Create an embed for admin overrule"""
+        title = f"⚖️ Decision Overruled - {'Approved' if is_allowed else 'Rejected'}"
+        color = discord.Color.green() if is_allowed else discord.Color.red()
+        
+        embed = discord.Embed(
+            title=title,
+            description="An admin has overruled the moderation decision.",
+            color=color,
+            timestamp=datetime.utcnow()
+        )
+        
+        embed.add_field(name="👤 Original Author", value=f"<@{log_data['author_id']}>", inline=True)
+        embed.add_field(name="👑 Admin", value=admin_name, inline=True)
+        embed.add_field(name="🆔 Message ID", value=f"`{log_data['message_id']}`", inline=True)
+        
+        embed.add_field(name="📝 Reason", value=reason, inline=False)
+        embed.add_field(name="🔗 Jump to Message", value=f"[Click here]({log_data['jump_url']})", inline=False)
+        
+        return embed
+    
+    @staticmethod
+    def moderation_blacklisted_content_embed(log_data: dict) -> discord.Embed:
+        """Create an embed for when blacklisted content is detected"""
+        embed = discord.Embed(
+            title="🚫 Blacklisted Content Detected",
+            description="A user attempted to post content that has been previously blacklisted.",
+            color=discord.Color.dark_red(),
+            timestamp=datetime.utcnow()
+        )
+        
+        embed.add_field(name="👤 Author", value=f"<@{log_data['author_id']}>\n`{log_data['author_name']}`", inline=True)
+        embed.add_field(name="📍 Channel", value=f"<#{log_data['channel_id']}>", inline=True)
+        embed.add_field(name="🚫 Action", value="Auto-rejected", inline=True)
+        
+        embed.add_field(name="🔗 Jump to Message", value=f"[Click here]({log_data['jump_url']})", inline=False)
+        
+        return embed
+    
+    @staticmethod
+    def moderation_config_embed(guild_id: str, settings: dict) -> discord.Embed:
+        """Create an embed showing current moderation configuration"""
+        embed = discord.Embed(
+            title="⚙️ Moderation Configuration",
+            description="Current moderation system settings for this server.",
+            color=discord.Color.blue(),
+            timestamp=datetime.utcnow()
+        )
+        
+        # Status
+        enabled = settings.get('moderation_enabled', False)
+        embed.add_field(name="🔘 Status", value="✅ Enabled" if enabled else "❌ Disabled", inline=True)
+        
+        # Review role
+        review_role_id = settings.get('review_role_id')
+        if review_role_id:
+            embed.add_field(name="👥 Review Role", value=f"<@&{review_role_id}>", inline=True)
+        else:
+            embed.add_field(name="👥 Review Role", value="❌ Not configured", inline=True)
+        
+        # Admin role
+        admin_role_id = settings.get('admin_role_id')
+        if admin_role_id:
+            embed.add_field(name="👑 Admin Role", value=f"<@&{admin_role_id}>", inline=True)
+        else:
+            embed.add_field(name="👑 Admin Role", value="❌ Not configured", inline=True)
+        
+        # Log channel
+        log_channel_id = settings.get('moderation_log_channel_id')
+        if log_channel_id:
+            embed.add_field(name="📋 Log Channel", value=f"<#{log_channel_id}>", inline=True)
+        else:
+            embed.add_field(name="📋 Log Channel", value="❌ Not configured", inline=True)
+        
+        embed.add_field(name="ℹ️ Note", value="Use `/modconfig` to change these settings.", inline=False)
+        embed.set_footer(text=f"Guild ID: {guild_id}")
+        
+        return embed
+    
+    @staticmethod
+    def moderation_stats_embed(stats: dict, days: int = 30) -> discord.Embed:
+        """Create an embed showing moderation statistics"""
+        embed = discord.Embed(
+            title="📊 Moderation Statistics",
+            description=f"Moderation activity for the last {days} days.",
+            color=discord.Color.blue(),
+            timestamp=datetime.utcnow()
+        )
+        
+        embed.add_field(name="🚨 Total Flagged", value=str(stats.get('total_flagged', 0)), inline=True)
+        embed.add_field(name="⏳ Pending Review", value=str(stats.get('pending_review', 0)), inline=True)
+        embed.add_field(name="✅ Approved", value=str(stats.get('approved', 0)), inline=True)
+        embed.add_field(name="❌ Rejected", value=str(stats.get('rejected', 0)), inline=True)
+        embed.add_field(name="🚫 Blacklisted Hits", value=str(stats.get('blacklisted_hits', 0)), inline=True)
+        embed.add_field(name="📝 Auto-approved", value=str(stats.get('auto_approved', 0)), inline=True)
+        embed.add_field(name="⚖️ Overruled", value=str(stats.get('overruled', 0)), inline=True)
+        
+        # Calculate percentages
+        total = stats.get('total_flagged', 0)
+        if total > 0:
+            accuracy = ((stats.get('approved', 0) + stats.get('rejected', 0)) / total) * 100
+            embed.add_field(name="🎯 Review Rate", value=f"{accuracy:.1f}%", inline=True)
+        
+        return embed
 
 
 class PurgeConfirmationView(discord.ui.View):

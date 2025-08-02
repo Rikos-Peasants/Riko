@@ -1401,10 +1401,10 @@ class CommandsController:
                 error_embed = EmbedViews.error_embed(f"Failed to end event: {str(e)}")
                 await ctx.send(embed=error_embed, ephemeral=True)
 
-        @self.bot.hybrid_command(name="setlogchannel", description="Set the channel for warning logs (Manage Server permission required)")
+        @self.bot.hybrid_command(name="setlogchannel", description="Set log channels for different systems (Manage Server permission required)")
         @can_warn()
-        async def setlogchannel_command(ctx, channel: Optional[discord.TextChannel] = None):
-            """Set or view the warning log channel"""
+        async def setlogchannel_command(ctx, log_type: str = None, channel: Optional[discord.TextChannel] = None):
+            """Set or view log channels for different systems"""
             try:
                 # Check if this is a slash command (has defer) or text command
                 if hasattr(ctx, 'defer'):
@@ -1419,56 +1419,6 @@ class CommandsController:
                         await ctx.send(error_msg)
                     return
                 
-                # If no channel provided, show current setting
-                if channel is None:
-                    leaderboard_manager = self.get_leaderboard_manager()
-                    if not leaderboard_manager:
-                        error_msg = "Leaderboard manager is not available."
-                        if hasattr(ctx, 'followup'):
-                            await ctx.followup.send(error_msg, ephemeral=True)
-                        else:
-                            await ctx.send(error_msg)
-                        return
-                    
-                    current_channel_id = await leaderboard_manager.get_warning_log_channel(ctx.guild.id)
-                    if current_channel_id:
-                        current_channel = ctx.guild.get_channel(current_channel_id)
-                        if current_channel:
-                            embed = discord.Embed(
-                                title="📋 Warning Log Channel",
-                                description=f"Warnings are currently logged to {current_channel.mention}",
-                                color=discord.Color.blue(),
-                                timestamp=discord.utils.utcnow()
-                            )
-                            embed.add_field(name="Channel", value=f"#{current_channel.name}", inline=True)
-                            embed.add_field(name="Channel ID", value=str(current_channel_id), inline=True)
-                            embed.set_footer(text="Use /setlogchannel #channel to change")
-                        else:
-                            embed = discord.Embed(
-                                title="⚠️ Warning Log Channel",
-                                description="Warning log channel is set but the channel no longer exists!",
-                                color=discord.Color.orange(),
-                                timestamp=discord.utils.utcnow()
-                            )
-                            embed.add_field(name="Missing Channel ID", value=str(current_channel_id), inline=False)
-                            embed.set_footer(text="Use /setlogchannel #channel to set a new channel")
-                    else:
-                        embed = discord.Embed(
-                            title="📋 Warning Log Channel",
-                            description="No warning log channel is currently set.",
-                            color=discord.Color.light_grey(),
-                            timestamp=discord.utils.utcnow()
-                        )
-                        embed.add_field(name="ℹ️ Info", value="Warnings will not be logged until a channel is set.", inline=False)
-                        embed.set_footer(text="Use /setlogchannel #channel to set one")
-                    
-                    if hasattr(ctx, 'followup'):
-                        await ctx.followup.send(embed=embed)
-                    else:
-                        await ctx.send(embed=embed)
-                    return
-                
-                # Set the new log channel
                 leaderboard_manager = self.get_leaderboard_manager()
                 if not leaderboard_manager:
                     error_msg = "Leaderboard manager is not available."
@@ -1478,29 +1428,172 @@ class CommandsController:
                         await ctx.send(error_msg)
                     return
                 
-                success = await leaderboard_manager.set_warning_log_channel(ctx.guild.id, channel.id)
+                # Available log types
+                log_types = {
+                    'warnings': ('Warning Logs', 'warning issued, user timeouts, user kicks, warning clears'),
+                    'moderation': ('Moderation Logs', 'AI flagged content, review decisions, overrules, blacklisted content')
+                }
+                
+                # If no log type provided, show all current settings
+                if not log_type:
+                    embed = discord.Embed(
+                        title="📋 Log Channel Configuration",
+                        description="Current log channel settings for this server.",
+                        color=discord.Color.blue(),
+                        timestamp=discord.utils.utcnow()
+                    )
+                    
+                    # Warning logs
+                    warning_channel_id = await leaderboard_manager.get_warning_log_channel(ctx.guild.id)
+                    if warning_channel_id:
+                        warning_channel = ctx.guild.get_channel(warning_channel_id)
+                        warning_value = warning_channel.mention if warning_channel else f"❌ Missing (ID: {warning_channel_id})"
+                    else:
+                        warning_value = "❌ Not configured"
+                    
+                    embed.add_field(name="⚠️ Warning Logs", value=warning_value, inline=False)
+                    
+                    # Moderation logs
+                    if leaderboard_manager.moderation_manager:
+                        mod_channel_id = await leaderboard_manager.moderation_manager.get_moderation_log_channel_id(str(ctx.guild.id))
+                        if mod_channel_id:
+                            mod_channel = ctx.guild.get_channel(mod_channel_id)
+                            mod_value = mod_channel.mention if mod_channel else f"❌ Missing (ID: {mod_channel_id})"
+                        else:
+                            mod_value = "❌ Not configured"
+                    else:
+                        mod_value = "❌ System not available"
+                    
+                    embed.add_field(name="🤖 Moderation Logs", value=mod_value, inline=False)
+                    
+                    # Usage help
+                    help_text = """**Usage:**
+• `/setlogchannel warnings #channel` - Set warning log channel
+• `/setlogchannel moderation #channel` - Set moderation log channel
+
+**What gets logged where:**
+• **Warning Logs:** Manual warnings, timeouts, kicks, warning clears
+• **Moderation Logs:** AI flagged content, staff reviews, admin overrules"""
+                    
+                    embed.add_field(name="💡 How to Configure", value=help_text, inline=False)
+                    embed.set_footer(text="Use the commands above to configure specific log channels")
+                    
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(embed=embed)
+                    else:
+                        await ctx.send(embed=embed)
+                    return
+                
+                # Validate log type
+                if log_type.lower() not in log_types:
+                    error_msg = f"❌ Invalid log type. Available types: {', '.join(log_types.keys())}"
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                log_type = log_type.lower()
+                log_name, log_description = log_types[log_type]
+                
+                # If no channel provided, show current setting for this log type
+                if channel is None:
+                    if log_type == 'warnings':
+                        current_channel_id = await leaderboard_manager.get_warning_log_channel(ctx.guild.id)
+                    elif log_type == 'moderation':
+                        if not leaderboard_manager.moderation_manager:
+                            error_msg = "Moderation system is not available."
+                            if hasattr(ctx, 'followup'):
+                                await ctx.followup.send(error_msg, ephemeral=True)
+                            else:
+                                await ctx.send(error_msg)
+                            return
+                        current_channel_id = await leaderboard_manager.moderation_manager.get_moderation_log_channel_id(str(ctx.guild.id))
+                    
+                    if current_channel_id:
+                        current_channel = ctx.guild.get_channel(current_channel_id)
+                        if current_channel:
+                            embed = discord.Embed(
+                                title=f"📋 {log_name} Channel",
+                                description=f"{log_name} are currently sent to {current_channel.mention}",
+                                color=discord.Color.blue(),
+                                timestamp=discord.utils.utcnow()
+                            )
+                            embed.add_field(name="Channel", value=f"#{current_channel.name}", inline=True)
+                            embed.add_field(name="Channel ID", value=str(current_channel_id), inline=True)
+                            embed.add_field(name="📋 Logs include:", value=log_description, inline=False)
+                            embed.set_footer(text=f"Use /setlogchannel {log_type} #channel to change")
+                        else:
+                            embed = discord.Embed(
+                                title=f"⚠️ {log_name} Channel",
+                                description=f"{log_name} channel is set but the channel no longer exists!",
+                                color=discord.Color.orange(),
+                                timestamp=discord.utils.utcnow()
+                            )
+                            embed.add_field(name="Missing Channel ID", value=str(current_channel_id), inline=False)
+                            embed.set_footer(text=f"Use /setlogchannel {log_type} #channel to set a new channel")
+                    else:
+                        embed = discord.Embed(
+                            title=f"📋 {log_name} Channel",
+                            description=f"No {log_name} channel is currently set.",
+                            color=discord.Color.light_grey(),
+                            timestamp=discord.utils.utcnow()
+                        )
+                        embed.add_field(name="ℹ️ Info", value=f"{log_name} will not be logged until a channel is set.", inline=False)
+                        embed.add_field(name="📋 Would include:", value=log_description, inline=False)
+                        embed.set_footer(text=f"Use /setlogchannel {log_type} #channel to set one")
+                    
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(embed=embed)
+                    else:
+                        await ctx.send(embed=embed)
+                    return
+                
+                # Set the new log channel
+                success = False
+                if log_type == 'warnings':
+                    success = await leaderboard_manager.set_warning_log_channel(ctx.guild.id, channel.id)
+                elif log_type == 'moderation':
+                    if not leaderboard_manager.moderation_manager:
+                        error_msg = "Moderation system is not available."
+                        if hasattr(ctx, 'followup'):
+                            await ctx.followup.send(error_msg, ephemeral=True)
+                        else:
+                            await ctx.send(error_msg)
+                        return
+                    success = await leaderboard_manager.moderation_manager.set_moderation_setting(str(ctx.guild.id), 'moderation_log_channel_id', channel.id)
                 
                 if success:
                     embed = discord.Embed(
-                        title="✅ Warning Log Channel Set",
-                        description=f"Warning logs will now be sent to {channel.mention}",
+                        title=f"✅ {log_name} Channel Set",
+                        description=f"{log_name} will now be sent to {channel.mention}",
                         color=discord.Color.green(),
                         timestamp=discord.utils.utcnow()
                     )
                     embed.add_field(name="Channel", value=f"#{channel.name}", inline=True)
                     embed.add_field(name="Set by", value=ctx.author.mention, inline=True)
-                    embed.set_footer(text="All future warnings will be logged here")
+                    embed.add_field(name="📋 Will log:", value=log_description, inline=False)
+                    embed.set_footer(text=f"All future {log_type} logs will be sent here")
                     
                     # Send a test log message
                     try:
                         test_embed = discord.Embed(
-                            title="🔧 Warning Log Channel Configured",
-                            description=f"This channel has been set as the warning log channel by {ctx.author.mention}.",
+                            title=f"🔧 {log_name} Channel Configured",
+                            description=f"This channel has been set as the {log_name.lower()} channel by {ctx.author.mention}.",
                             color=discord.Color.blue(),
                             timestamp=discord.utils.utcnow()
                         )
-                        test_embed.add_field(name="📋 What gets logged here:", value="• Warning issued\n• User timeouts\n• User kicks\n• Warning clears", inline=False)
-                        test_embed.set_footer(text="Warning System Configuration")
+                        
+                        if log_type == 'warnings':
+                            test_embed.add_field(name="📋 What gets logged here:", 
+                                               value="• Warning issued\n• User timeouts\n• User kicks\n• Warning clears", 
+                                               inline=False)
+                        elif log_type == 'moderation':
+                            test_embed.add_field(name="📋 What gets logged here:", 
+                                               value="• AI flagged content\n• Staff review decisions\n• Admin overrules\n• Blacklisted content hits", 
+                                               inline=False)
+                        
+                        test_embed.set_footer(text=f"{log_name} System Configuration")
                         await channel.send(embed=test_embed)
                     except discord.Forbidden:
                         embed.add_field(name="⚠️ Warning", value="I don't have permission to send messages in that channel!", inline=False)
@@ -1508,7 +1601,7 @@ class CommandsController:
                 else:
                     embed = discord.Embed(
                         title="❌ Error",
-                        description="Failed to set the warning log channel. Please try again.",
+                        description=f"Failed to set the {log_name.lower()} channel. Please try again.",
                         color=discord.Color.red(),
                         timestamp=discord.utils.utcnow()
                     )
@@ -1940,6 +2033,286 @@ class CommandsController:
                     
             except Exception as e:
                 error_embed = EmbedViews.error_embed(f"Failed to add YouTube monitor: {str(e)}")
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(embed=error_embed, ephemeral=True)
+                else:
+                    await ctx.send(embed=error_embed)
+
+        # Moderation system commands
+        def can_use_moderation():
+            """Check if user can use moderation commands"""
+            async def predicate(ctx):
+                # Bot owners can always use the command
+                if await ctx.bot.is_owner(ctx.author):
+                    return True
+                
+                # Check if user has administrator permissions
+                if ctx.author.guild_permissions.administrator:
+                    return True
+                
+                return False
+            return commands.check(predicate)
+
+        @self.bot.hybrid_command(name="overrule", description="Admin overrule of moderation decision (Admin permissions required)")
+        @can_use_moderation()
+        async def overrule_command(ctx, message_id: str, is_allowed: bool, *, reason: str = "Admin overrule"):
+            """Admin overrule of moderation decision"""
+            try:
+                if hasattr(ctx, 'defer'):
+                    await ctx.defer()
+                
+                # Validate guild
+                if not ctx.guild or ctx.guild.id != Config.GUILD_ID:
+                    error_msg = "This command can only be used in the configured guild."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Get moderation manager
+                leaderboard_manager = self.get_leaderboard_manager()
+                if not leaderboard_manager or not leaderboard_manager.moderation_manager:
+                    error_msg = "Moderation system is not available."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                moderation_manager = leaderboard_manager.moderation_manager
+                
+                # Check if moderation log exists
+                log_data = await moderation_manager.get_moderation_log(message_id)
+                if not log_data:
+                    error_msg = f"No moderation log found for message ID `{message_id}`."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Perform overrule
+                success = await moderation_manager.overrule_decision(
+                    message_id, is_allowed, str(ctx.author.id), ctx.author.display_name, reason
+                )
+                
+                if not success:
+                    error_msg = "Failed to overrule moderation decision."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Create and send overrule embed
+                embed = EmbedViews.moderation_overruled_embed(log_data, ctx.author.display_name, is_allowed, reason)
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(embed=embed)
+                else:
+                    await ctx.send(embed=embed)
+                
+                # Send to moderation log channel
+                log_channel_id = await moderation_manager.get_moderation_log_channel_id(str(ctx.guild.id))
+                if log_channel_id:
+                    log_channel = ctx.guild.get_channel(log_channel_id)
+                    if log_channel and log_channel != ctx.channel:
+                        await log_channel.send(embed=embed)
+                
+                logger.info(f"Admin overrule by {ctx.author.display_name}: message {message_id} -> {'allowed' if is_allowed else 'denied'}")
+                
+            except Exception as e:
+                error_embed = EmbedViews.error_embed(f"Failed to overrule decision: {str(e)}")
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(embed=error_embed, ephemeral=True)
+                else:
+                    await ctx.send(embed=error_embed)
+
+        @self.bot.hybrid_command(name="modconfig", description="Configure moderation system settings (Admin permissions required)")
+        @can_use_moderation()
+        async def modconfig_command(ctx, setting: str = None, value: str = None):
+            """Configure moderation system settings"""
+            try:
+                if hasattr(ctx, 'defer'):
+                    await ctx.defer()
+                
+                # Validate guild
+                if not ctx.guild or ctx.guild.id != Config.GUILD_ID:
+                    error_msg = "This command can only be used in the configured guild."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Get moderation manager
+                leaderboard_manager = self.get_leaderboard_manager()
+                if not leaderboard_manager or not leaderboard_manager.moderation_manager:
+                    error_msg = "Moderation system is not available."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                moderation_manager = leaderboard_manager.moderation_manager
+                
+                # If no setting provided, show current configuration
+                if not setting:
+                    settings = {
+                        'moderation_enabled': await moderation_manager.get_moderation_setting(str(ctx.guild.id), 'moderation_enabled', False),
+                        'review_role_id': await moderation_manager.get_review_role_id(str(ctx.guild.id)),
+                        'admin_role_id': await moderation_manager.get_admin_role_id(str(ctx.guild.id)),
+                        'moderation_log_channel_id': await moderation_manager.get_moderation_log_channel_id(str(ctx.guild.id))
+                    }
+                    
+                    embed = EmbedViews.moderation_config_embed(str(ctx.guild.id), settings)
+                    help_text = """
+**Available settings:**
+• `enable` - Enable/disable moderation (true/false)
+• `review_role` - Set role that can review flagged content
+• `admin_role` - Set role that can overrule decisions
+• `log_channel` - Set channel for moderation logs
+
+**Examples:**
+• `/modconfig enable true`
+• `/modconfig review_role @Seraphs`
+• `/modconfig log_channel #mod-logs`
+                    """
+                    embed.add_field(name="💡 Usage", value=help_text, inline=False)
+                    
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(embed=embed)
+                    else:
+                        await ctx.send(embed=embed)
+                    return
+                
+                # Handle setting changes
+                success = False
+                
+                if setting.lower() == 'enable':
+                    if value.lower() in ['true', '1', 'on', 'yes']:
+                        success = await moderation_manager.set_moderation_setting(str(ctx.guild.id), 'moderation_enabled', True)
+                        response = "✅ Moderation system **enabled**."
+                    elif value.lower() in ['false', '0', 'off', 'no']:
+                        success = await moderation_manager.set_moderation_setting(str(ctx.guild.id), 'moderation_enabled', False)
+                        response = "❌ Moderation system **disabled**."
+                    else:
+                        response = "❌ Invalid value. Use `true` or `false`."
+                
+                elif setting.lower() == 'review_role':
+                    # Parse role mention or ID
+                    role = None
+                    if value.startswith('<@&') and value.endswith('>'):
+                        role_id = int(value[3:-1])
+                        role = ctx.guild.get_role(role_id)
+                    else:
+                        try:
+                            role_id = int(value)
+                            role = ctx.guild.get_role(role_id)
+                        except ValueError:
+                            pass
+                    
+                    if role:
+                        success = await moderation_manager.set_moderation_setting(str(ctx.guild.id), 'review_role_id', role.id)
+                        response = f"✅ Review role set to {role.mention}."
+                    else:
+                        response = "❌ Role not found. Use a role mention or role ID."
+                
+                elif setting.lower() == 'admin_role':
+                    # Parse role mention or ID
+                    role = None
+                    if value.startswith('<@&') and value.endswith('>'):
+                        role_id = int(value[3:-1])
+                        role = ctx.guild.get_role(role_id)
+                    else:
+                        try:
+                            role_id = int(value)
+                            role = ctx.guild.get_role(role_id)
+                        except ValueError:
+                            pass
+                    
+                    if role:
+                        success = await moderation_manager.set_moderation_setting(str(ctx.guild.id), 'admin_role_id', role.id)
+                        response = f"✅ Admin role set to {role.mention}."
+                    else:
+                        response = "❌ Role not found. Use a role mention or role ID."
+                
+                elif setting.lower() == 'log_channel':
+                    # Parse channel mention or ID
+                    channel = None
+                    if value.startswith('<#') and value.endswith('>'):
+                        channel_id = int(value[2:-1])
+                        channel = ctx.guild.get_channel(channel_id)
+                    else:
+                        try:
+                            channel_id = int(value)
+                            channel = ctx.guild.get_channel(channel_id)
+                        except ValueError:
+                            pass
+                    
+                    if channel and isinstance(channel, discord.TextChannel):
+                        success = await moderation_manager.set_moderation_setting(str(ctx.guild.id), 'moderation_log_channel_id', channel.id)
+                        response = f"✅ Moderation log channel set to {channel.mention}."
+                    else:
+                        response = "❌ Text channel not found. Use a channel mention or channel ID."
+                
+                else:
+                    response = "❌ Unknown setting. Use `/modconfig` without parameters to see available settings."
+                
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(response)
+                else:
+                    await ctx.send(response)
+                
+            except Exception as e:
+                error_embed = EmbedViews.error_embed(f"Failed to configure moderation: {str(e)}")
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(embed=error_embed, ephemeral=True)
+                else:
+                    await ctx.send(embed=error_embed)
+
+        @self.bot.hybrid_command(name="modstats", description="Show moderation statistics (Admin permissions required)")
+        @can_use_moderation()
+        async def modstats_command(ctx, days: int = 30):
+            """Show moderation statistics"""
+            try:
+                if hasattr(ctx, 'defer'):
+                    await ctx.defer()
+                
+                # Validate guild
+                if not ctx.guild or ctx.guild.id != Config.GUILD_ID:
+                    error_msg = "This command can only be used in the configured guild."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                # Get moderation manager
+                leaderboard_manager = self.get_leaderboard_manager()
+                if not leaderboard_manager or not leaderboard_manager.moderation_manager:
+                    error_msg = "Moderation system is not available."
+                    if hasattr(ctx, 'followup'):
+                        await ctx.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.send(error_msg)
+                    return
+                
+                moderation_manager = leaderboard_manager.moderation_manager
+                
+                # Get statistics
+                stats = await moderation_manager.get_moderation_stats(str(ctx.guild.id), days)
+                
+                embed = EmbedViews.moderation_stats_embed(stats, days)
+                
+                if hasattr(ctx, 'followup'):
+                    await ctx.followup.send(embed=embed)
+                else:
+                    await ctx.send(embed=embed)
+                
+            except Exception as e:
+                error_embed = EmbedViews.error_embed(f"Failed to get moderation stats: {str(e)}")
                 if hasattr(ctx, 'followup'):
                     await ctx.followup.send(embed=error_embed, ephemeral=True)
                 else:

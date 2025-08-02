@@ -387,6 +387,9 @@ class EventsController:
         if not message.guild or message.guild.id != Config.GUILD_ID:
             return
         
+        # Check moderation before other processing
+        await self._handle_message_moderation(message)
+        
         # Check for spam channel flood detection
         await self._check_spam_channel_flood(message)
         
@@ -804,7 +807,7 @@ Here are some useful resources to help you:
             await ctx.send(f"❌ An error occurred: {str(error)}", ephemeral=True)
     
     async def _handle_reaction_change(self, reaction: discord.Reaction, user: discord.User, added: bool):
-        """Handle reaction additions and removals for leaderboard tracking"""
+        """Handle reaction additions and removals for leaderboard tracking and moderation"""
         # Ignore bot reactions
         if user.bot:
             return
@@ -815,6 +818,10 @@ Here are some useful resources to help you:
         
         if reaction.message.guild.id != Config.GUILD_ID:
             return
+        
+        # Check for moderation reactions first
+        if await self._handle_moderation_reaction(reaction, user, added):
+            return  # Handled as moderation reaction
         
         # Handle bookmark reactions FIRST (works in any channel with images)
         emoji_str = str(reaction.emoji)
@@ -1098,4 +1105,264 @@ Here are some useful resources to help you:
                     pass
                     
         except Exception as e:
-            logger.error(f"Error updating quest progress for rating: {e}") 
+            logger.error(f"Error updating quest progress for rating: {e}")
+    
+    async def _handle_message_moderation(self, message: discord.Message):
+        """Handle message moderation using AI scanning"""
+        try:
+            # Skip if moderation manager not available
+            if not hasattr(self.bot, 'leaderboard_manager') or not self.bot.leaderboard_manager:
+                return
+            
+            if not hasattr(self.bot.leaderboard_manager, 'moderation_manager') or not self.bot.leaderboard_manager.moderation_manager:
+                return
+            
+            moderation_manager = self.bot.leaderboard_manager.moderation_manager
+            
+            # Check if moderation is enabled for this guild
+            if not await moderation_manager.is_moderation_enabled(str(message.guild.id)):
+                return
+            
+            # Scan the message
+            moderation_result = await moderation_manager.scan_message(message)
+            
+            if not moderation_result:
+                return  # No issues found
+            
+            # Handle blacklisted content (auto-rejected)
+            if moderation_result.get('status') == 'blacklisted':
+                await self._handle_blacklisted_content(message, moderation_result)
+                return
+            
+            # Handle content that needs review
+            if moderation_result.get('status') == 'pending_review':
+                await self._send_moderation_review(message, moderation_result)
+            
+        except Exception as e:
+            logger.error(f"Error in message moderation: {e}")
+    
+    async def _handle_blacklisted_content(self, message: discord.Message, moderation_result: dict):
+        """Handle when blacklisted content is detected"""
+        try:
+            # Get moderation log channel
+            moderation_manager = self.bot.leaderboard_manager.moderation_manager
+            log_channel_id = await moderation_manager.get_moderation_log_channel_id(str(message.guild.id))
+            
+            if log_channel_id:
+                log_channel = message.guild.get_channel(log_channel_id)
+                if log_channel:
+                    from views.embeds import EmbedViews
+                    embed = EmbedViews.moderation_blacklisted_content_embed(moderation_result)
+                    await log_channel.send(embed=embed)
+            
+            # Optionally delete the message (if bot has permissions)
+            try:
+                await message.delete()
+                logger.info(f"Deleted blacklisted content from {message.author.display_name}")
+            except discord.Forbidden:
+                logger.warning("Missing permission to delete blacklisted message")
+            except discord.NotFound:
+                pass  # Message already deleted
+            
+        except Exception as e:
+            logger.error(f"Error handling blacklisted content: {e}")
+    
+    async def _send_moderation_review(self, message: discord.Message, moderation_result: dict):
+        """Send moderation review request to staff"""
+        try:
+            from views.embeds import EmbedViews
+            moderation_manager = self.bot.leaderboard_manager.moderation_manager
+            
+            # Get review role
+            review_role_id = await moderation_manager.get_review_role_id(str(message.guild.id))
+            if not review_role_id:
+                # Use default review role from config
+                from config import Config
+                review_role_id = Config.DEFAULT_MODERATION_REVIEW_ROLE_ID
+            
+            # Get moderation log channel
+            log_channel_id = await moderation_manager.get_moderation_log_channel_id(str(message.guild.id))
+            if not log_channel_id:
+                logger.warning("Moderation log channel not configured, cannot send review request")
+                return
+            
+            log_channel = message.guild.get_channel(log_channel_id)
+            if not log_channel:
+                logger.warning(f"Moderation log channel {log_channel_id} not found")
+                return
+            
+            # Create review embed
+            embed = EmbedViews.moderation_flagged_embed(moderation_result)
+            
+            # Send with role ping
+            content = f"<@&{review_role_id}> A message has been flagged for review:"
+            
+            # Send the review request
+            review_message = await log_channel.send(content=content, embed=embed)
+            
+            # Add reaction buttons for quick review
+            await review_message.add_reaction('✅')  # Approve
+            await review_message.add_reaction('❌')  # Reject
+            await review_message.add_reaction('📝')  # Approve & Whitelist
+            await review_message.add_reaction('🚫')  # Reject & Blacklist
+            
+            logger.info(f"Sent moderation review request for message from {message.author.display_name}")
+            
+        except Exception as e:
+            logger.error(f"Error sending moderation review: {e}")
+    
+    async def _handle_moderation_reaction(self, reaction: discord.Reaction, user: discord.User, added: bool) -> bool:
+        """Handle moderation review reactions. Returns True if this was a moderation reaction."""
+        try:
+            # Only handle added reactions
+            if not added:
+                return False
+            
+            # Check if moderation manager is available
+            if not hasattr(self.bot, 'leaderboard_manager') or not self.bot.leaderboard_manager:
+                return False
+            
+            if not hasattr(self.bot.leaderboard_manager, 'moderation_manager') or not self.bot.leaderboard_manager.moderation_manager:
+                return False
+            
+            moderation_manager = self.bot.leaderboard_manager.moderation_manager
+            
+            # Check if this is a moderation log channel
+            log_channel_id = await moderation_manager.get_moderation_log_channel_id(str(reaction.message.guild.id))
+            if not log_channel_id or reaction.message.channel.id != log_channel_id:
+                return False
+            
+            # Check if the message is from the bot (likely a moderation review)
+            if reaction.message.author != self.bot.user:
+                return False
+            
+            # Check if user has permission to review
+            if not await self._user_can_review_moderation(user, reaction.message.guild):
+                return False
+            
+            # Check if the embed contains a message ID
+            if not reaction.message.embeds:
+                return False
+            
+            embed = reaction.message.embeds[0]
+            message_id = None
+            
+            # Extract message ID from embed
+            for field in embed.fields:
+                if field.name == "🆔 Message ID":
+                    message_id = field.value.strip('`')
+                    break
+            
+            if not message_id:
+                return False
+            
+            # Handle different reactions
+            emoji_str = str(reaction.emoji)
+            
+            if emoji_str == '✅':  # Approve
+                success = await moderation_manager.approve_message(
+                    message_id, str(user.id), user.display_name, whitelist=False
+                )
+                if success:
+                    await self._send_moderation_decision_log(reaction.message, "approved", user.display_name, message_id)
+            
+            elif emoji_str == '❌':  # Reject
+                success = await moderation_manager.reject_message(
+                    message_id, str(user.id), user.display_name, blacklist=False, reason="Rejected by staff"
+                )
+                if success:
+                    await self._send_moderation_decision_log(reaction.message, "rejected", user.display_name, message_id, "Rejected by staff")
+            
+            elif emoji_str == '📝':  # Approve & Whitelist
+                success = await moderation_manager.approve_message(
+                    message_id, str(user.id), user.display_name, whitelist=True
+                )
+                if success:
+                    await self._send_moderation_decision_log(reaction.message, "approved", user.display_name, message_id, whitelisted=True)
+            
+            elif emoji_str == '🚫':  # Reject & Blacklist
+                success = await moderation_manager.reject_message(
+                    message_id, str(user.id), user.display_name, blacklist=True, reason="Blacklisted by staff"
+                )
+                if success:
+                    await self._send_moderation_decision_log(reaction.message, "rejected", user.display_name, message_id, "Blacklisted by staff", blacklisted=True)
+            
+            else:
+                return False  # Not a moderation reaction
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error handling moderation reaction: {e}")
+            return False
+    
+    async def _user_can_review_moderation(self, user: discord.User, guild: discord.Guild) -> bool:
+        """Check if user can review moderation decisions"""
+        try:
+            member = guild.get_member(user.id)
+            if not member:
+                return False
+            
+            # Bot owners can always review
+            if await self.bot.is_owner(user):
+                return True
+            
+            # Check if user has administrator permissions
+            if member.guild_permissions.administrator:
+                return True
+            
+            # Check configured review role
+            moderation_manager = self.bot.leaderboard_manager.moderation_manager
+            review_role_id = await moderation_manager.get_review_role_id(str(guild.id))
+            
+            if not review_role_id:
+                # Use default review role from config
+                from config import Config
+                review_role_id = Config.DEFAULT_MODERATION_REVIEW_ROLE_ID
+            
+            review_role = discord.utils.get(member.roles, id=review_role_id)
+            return review_role is not None
+            
+        except Exception as e:
+            logger.error(f"Error checking moderation review permissions: {e}")
+            return False
+    
+    async def _send_moderation_decision_log(self, original_message: discord.Message, decision: str, moderator_name: str, message_id: str, reason: str = None, whitelisted: bool = False, blacklisted: bool = False):
+        """Send a log message about the moderation decision"""
+        try:
+            from views.embeds import EmbedViews
+            moderation_manager = self.bot.leaderboard_manager.moderation_manager
+            
+            # Get the moderation log data
+            log_data = await moderation_manager.get_moderation_log(message_id)
+            if not log_data:
+                logger.error(f"Could not find moderation log for message {message_id}")
+                return
+            
+            # Create appropriate embed
+            if decision == "approved":
+                embed = EmbedViews.moderation_approved_embed(log_data, moderator_name, whitelisted)
+            else:  # rejected
+                embed = EmbedViews.moderation_rejected_embed(log_data, moderator_name, reason or "No reason provided", blacklisted)
+            
+            # Send the decision log
+            await original_message.channel.send(embed=embed)
+            
+            # Edit the original message to show it's been handled
+            if original_message.embeds:
+                original_embed = original_message.embeds[0]
+                original_embed.color = discord.Color.green() if decision == "approved" else discord.Color.red()
+                original_embed.set_footer(text=f"✅ Handled by {moderator_name}")
+                
+                # Clear reactions
+                try:
+                    await original_message.clear_reactions()
+                except discord.Forbidden:
+                    pass
+                
+                await original_message.edit(embed=original_embed)
+            
+            logger.info(f"Moderation decision logged: {decision} by {moderator_name} for message {message_id}")
+            
+        except Exception as e:
+            logger.error(f"Error sending moderation decision log: {e}") 

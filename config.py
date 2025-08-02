@@ -25,6 +25,11 @@ class Config:
     MONGO_URI = os.getenv('MONGO_URI')
     GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')  # For YouTube video announcements
     YOUTUBE_API_KEY = os.getenv('YOUTUBE_API_KEY')  # For YouTube Data API
+    OPENAI_KEY = os.getenv('OPENAI_KEY')  # For content moderation
+    
+    # Moderation system default role IDs (can be configured per guild)
+    DEFAULT_MODERATION_REVIEW_ROLE_ID = 1372477845997359244  # Seraphs role (default reviewers)
+    DEFAULT_MODERATION_ADMIN_ROLE_ID = 1282192809746628658   # Admin role (default overrule)
     
     # NSFWBAN system role IDs
     NSFWBAN_MODERATOR_ROLE_ID = 1372477845997359244  # Role that can use nsfwban commands
@@ -65,7 +70,18 @@ class Config:
             ('MONGO_URI', cls.MONGO_URI)
         ]
         
+        # Optional but recommended vars
+        optional_vars = [
+            ('OPENAI_KEY', cls.OPENAI_KEY)
+        ]
+        
         missing_vars = [var_name for var_name, var_value in required_vars if not var_value]
+        missing_optional = [var_name for var_name, var_value in optional_vars if not var_value]
         
         if missing_vars:
-            raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}") 
+            raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
+        
+        if missing_optional:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Missing optional environment variables (some features may not work): {', '.join(missing_optional)}") 
