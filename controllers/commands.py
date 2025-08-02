@@ -2119,6 +2119,17 @@ class CommandsController:
                     if log_channel and log_channel != ctx.channel:
                         await log_channel.send(embed=embed)
                 
+                # Clean up the moderation view if it exists
+                if hasattr(self.bot, 'moderation_view_manager') and self.bot.moderation_view_manager:
+                    view = self.bot.moderation_view_manager.get_view(message_id)
+                    if view:
+                        view.processed = True
+                        # Disable all buttons in the view
+                        for item in view.children:
+                            item.disabled = True
+                        # Remove from manager
+                        self.bot.moderation_view_manager.remove_view(message_id)
+                
                 logger.info(f"Admin overrule by {ctx.author.display_name}: message {message_id} -> {'allowed' if is_allowed else 'denied'}")
                 
             except Exception as e:

@@ -819,9 +819,7 @@ Here are some useful resources to help you:
         if reaction.message.guild.id != Config.GUILD_ID:
             return
         
-        # Check for moderation reactions first
-        if await self._handle_moderation_reaction(reaction, user, added):
-            return  # Handled as moderation reaction
+        # Note: Moderation is now handled via UI buttons, not reactions
         
         # Handle bookmark reactions FIRST (works in any channel with images)
         emoji_str = str(reaction.emoji)
@@ -1168,7 +1166,7 @@ Here are some useful resources to help you:
             logger.error(f"Error handling blacklisted content: {e}")
     
     async def _send_moderation_review(self, message: discord.Message, moderation_result: dict):
-        """Send moderation review request to staff"""
+        """Send moderation review request to staff with UI buttons"""
         try:
             from views.embeds import EmbedViews
             moderation_manager = self.bot.leaderboard_manager.moderation_manager
@@ -1191,178 +1189,40 @@ Here are some useful resources to help you:
                 logger.warning(f"Moderation log channel {log_channel_id} not found")
                 return
             
-            # Create review embed
+            # Create review embed with enhanced information
             embed = EmbedViews.moderation_flagged_embed(moderation_result)
             
-            # Send with role ping
-            content = f"<@&{review_role_id}> A message has been flagged for review:"
+            # Add voting information to the embed
+            embed.add_field(
+                name="🗳️ Voting System", 
+                value="• **2+ Whitelist votes** = Auto-approve (unless majority blacklist)\n"
+                      "• **Majority Blacklist** = Auto-reject\n"
+                      "• **Tie with 4+ votes** = Admin intervention required\n"
+                      "• **Admins** can use `/overrule` to override any decision", 
+                inline=False
+            )
             
-            # Send the review request
-            review_message = await log_channel.send(content=content, embed=embed)
+            # Create moderation view with buttons
+            if hasattr(self.bot, 'moderation_view_manager') and self.bot.moderation_view_manager:
+                view = self.bot.moderation_view_manager.create_view(
+                    moderation_result['message_id'], 
+                    moderation_result
+                )
+            else:
+                logger.error("Moderation view manager not available")
+                return
             
-            # Add reaction buttons for quick review
-            await review_message.add_reaction('✅')  # Approve
-            await review_message.add_reaction('❌')  # Reject
-            await review_message.add_reaction('📝')  # Approve & Whitelist
-            await review_message.add_reaction('🚫')  # Reject & Blacklist
+            # Send with role ping and interactive buttons
+            content = f"<@&{review_role_id}> 🚨 **Content Flagged for Review**\n" \
+                     f"**Author:** <@{moderation_result['author_id']}> • **Channel:** <#{moderation_result['channel_id']}>"
             
-            logger.info(f"Sent moderation review request for message from {message.author.display_name}")
+            # Send the review request with buttons
+            review_message = await log_channel.send(content=content, embed=embed, view=view)
+            
+            logger.info(f"Sent moderation review request with UI buttons for message from {message.author.display_name}")
             
         except Exception as e:
             logger.error(f"Error sending moderation review: {e}")
     
-    async def _handle_moderation_reaction(self, reaction: discord.Reaction, user: discord.User, added: bool) -> bool:
-        """Handle moderation review reactions. Returns True if this was a moderation reaction."""
-        try:
-            # Only handle added reactions
-            if not added:
-                return False
-            
-            # Check if moderation manager is available
-            if not hasattr(self.bot, 'leaderboard_manager') or not self.bot.leaderboard_manager:
-                return False
-            
-            if not hasattr(self.bot.leaderboard_manager, 'moderation_manager') or not self.bot.leaderboard_manager.moderation_manager:
-                return False
-            
-            moderation_manager = self.bot.leaderboard_manager.moderation_manager
-            
-            # Check if this is a moderation log channel
-            log_channel_id = await moderation_manager.get_moderation_log_channel_id(str(reaction.message.guild.id))
-            if not log_channel_id or reaction.message.channel.id != log_channel_id:
-                return False
-            
-            # Check if the message is from the bot (likely a moderation review)
-            if reaction.message.author != self.bot.user:
-                return False
-            
-            # Check if user has permission to review
-            if not await self._user_can_review_moderation(user, reaction.message.guild):
-                return False
-            
-            # Check if the embed contains a message ID
-            if not reaction.message.embeds:
-                return False
-            
-            embed = reaction.message.embeds[0]
-            message_id = None
-            
-            # Extract message ID from embed
-            for field in embed.fields:
-                if field.name == "🆔 Message ID":
-                    message_id = field.value.strip('`')
-                    break
-            
-            if not message_id:
-                return False
-            
-            # Handle different reactions
-            emoji_str = str(reaction.emoji)
-            
-            if emoji_str == '✅':  # Approve
-                success = await moderation_manager.approve_message(
-                    message_id, str(user.id), user.display_name, whitelist=False
-                )
-                if success:
-                    await self._send_moderation_decision_log(reaction.message, "approved", user.display_name, message_id)
-            
-            elif emoji_str == '❌':  # Reject
-                success = await moderation_manager.reject_message(
-                    message_id, str(user.id), user.display_name, blacklist=False, reason="Rejected by staff"
-                )
-                if success:
-                    await self._send_moderation_decision_log(reaction.message, "rejected", user.display_name, message_id, "Rejected by staff")
-            
-            elif emoji_str == '📝':  # Approve & Whitelist
-                success = await moderation_manager.approve_message(
-                    message_id, str(user.id), user.display_name, whitelist=True
-                )
-                if success:
-                    await self._send_moderation_decision_log(reaction.message, "approved", user.display_name, message_id, whitelisted=True)
-            
-            elif emoji_str == '🚫':  # Reject & Blacklist
-                success = await moderation_manager.reject_message(
-                    message_id, str(user.id), user.display_name, blacklist=True, reason="Blacklisted by staff"
-                )
-                if success:
-                    await self._send_moderation_decision_log(reaction.message, "rejected", user.display_name, message_id, "Blacklisted by staff", blacklisted=True)
-            
-            else:
-                return False  # Not a moderation reaction
-            
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error handling moderation reaction: {e}")
-            return False
-    
-    async def _user_can_review_moderation(self, user: discord.User, guild: discord.Guild) -> bool:
-        """Check if user can review moderation decisions"""
-        try:
-            member = guild.get_member(user.id)
-            if not member:
-                return False
-            
-            # Bot owners can always review
-            if await self.bot.is_owner(user):
-                return True
-            
-            # Check if user has administrator permissions
-            if member.guild_permissions.administrator:
-                return True
-            
-            # Check configured review role
-            moderation_manager = self.bot.leaderboard_manager.moderation_manager
-            review_role_id = await moderation_manager.get_review_role_id(str(guild.id))
-            
-            if not review_role_id:
-                # Use default review role from config
-                from config import Config
-                review_role_id = Config.DEFAULT_MODERATION_REVIEW_ROLE_ID
-            
-            review_role = discord.utils.get(member.roles, id=review_role_id)
-            return review_role is not None
-            
-        except Exception as e:
-            logger.error(f"Error checking moderation review permissions: {e}")
-            return False
-    
-    async def _send_moderation_decision_log(self, original_message: discord.Message, decision: str, moderator_name: str, message_id: str, reason: str = None, whitelisted: bool = False, blacklisted: bool = False):
-        """Send a log message about the moderation decision"""
-        try:
-            from views.embeds import EmbedViews
-            moderation_manager = self.bot.leaderboard_manager.moderation_manager
-            
-            # Get the moderation log data
-            log_data = await moderation_manager.get_moderation_log(message_id)
-            if not log_data:
-                logger.error(f"Could not find moderation log for message {message_id}")
-                return
-            
-            # Create appropriate embed
-            if decision == "approved":
-                embed = EmbedViews.moderation_approved_embed(log_data, moderator_name, whitelisted)
-            else:  # rejected
-                embed = EmbedViews.moderation_rejected_embed(log_data, moderator_name, reason or "No reason provided", blacklisted)
-            
-            # Send the decision log
-            await original_message.channel.send(embed=embed)
-            
-            # Edit the original message to show it's been handled
-            if original_message.embeds:
-                original_embed = original_message.embeds[0]
-                original_embed.color = discord.Color.green() if decision == "approved" else discord.Color.red()
-                original_embed.set_footer(text=f"✅ Handled by {moderator_name}")
-                
-                # Clear reactions
-                try:
-                    await original_message.clear_reactions()
-                except discord.Forbidden:
-                    pass
-                
-                await original_message.edit(embed=original_embed)
-            
-            logger.info(f"Moderation decision logged: {decision} by {moderator_name} for message {message_id}")
-            
-        except Exception as e:
-            logger.error(f"Error sending moderation decision log: {e}") 
+    # Old reaction-based moderation system has been replaced with UI buttons
+    # See views/moderation_view.py for the new interactive moderation system 

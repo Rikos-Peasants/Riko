@@ -50,6 +50,7 @@ class RikoBot(commands.Bot):
         self.scheduler_controller: Optional['SchedulerController'] = None
         self.youtube_monitor: Optional['YouTubeMonitor'] = None
         self.random_announcer: Optional['RandomAnnouncer'] = None
+        self.moderation_view_manager: Optional[object] = None
         
         # Initialize leaderboard manager first (required by other components)
         try:
@@ -99,6 +100,15 @@ class RikoBot(commands.Bot):
         self.events_controller = EventsController(self)
         self.commands_controller = CommandsController(self)
         self.scheduler_controller = SchedulerController(self)
+        
+        # Initialize moderation view manager
+        try:
+            from views.moderation_view import ModerationViewManager
+            self.moderation_view_manager = ModerationViewManager(self)
+            logger.info("✅ Moderation view manager initialized successfully")
+        except Exception as e:
+            logger.error(f"❌ Failed to initialize moderation view manager: {e}")
+            self.moderation_view_manager = None
     
     async def setup_hook(self):
         """Initial setup when bot is starting"""
@@ -156,6 +166,37 @@ class RikoBot(commands.Bot):
         logger.info("Status cycling started")
         
         logger.info("🚀 Bot is fully ready and operational!")
+    
+    async def on_interaction(self, interaction: discord.Interaction):
+        """Handle interactions including moderation buttons"""
+        try:
+            # Let the default interaction handler process first
+            if interaction.type == discord.InteractionType.application_command:
+                return  # Let the command tree handle this
+            
+            # Handle moderation button interactions
+            if (interaction.type == discord.InteractionType.component 
+                and self.moderation_view_manager):
+                handled = await self.moderation_view_manager.handle_interaction(interaction)
+                if handled:
+                    return
+            
+            # If not handled by moderation system, continue with default processing
+            await super().on_interaction(interaction)
+            
+        except discord.InteractionResponded:
+            # Interaction was already responded to
+            pass
+        except Exception as e:
+            logger.error(f"Error handling interaction: {e}")
+            if not interaction.response.is_done():
+                try:
+                    await interaction.response.send_message(
+                        "❌ An error occurred processing your request.", 
+                        ephemeral=True
+                    )
+                except:
+                    pass
     
     @tasks.loop(minutes=2)  # Change status every 2 minutes
     async def cycle_status(self):

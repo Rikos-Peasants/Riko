@@ -783,7 +783,7 @@ class EmbedViews:
         
         embed.add_field(name="🔗 Jump to Message", value=f"[Click here]({moderation_data['jump_url']})", inline=True)
         
-        embed.set_footer(text="React ✅ to approve, ❌ to reject, 📝 to whitelist, 🚫 to blacklist")
+        embed.set_footer(text="Use buttons below to vote • 2+ whitelist = auto-approve • Majority blacklist = auto-reject")
         
         return embed
     
@@ -852,6 +852,13 @@ class EmbedViews:
         
         embed.add_field(name="📝 Reason", value=reason, inline=False)
         embed.add_field(name="🔗 Jump to Message", value=f"[Click here]({log_data['jump_url']})", inline=False)
+        
+        # Add note about overrule power
+        embed.add_field(
+            name="⚖️ Admin Override", 
+            value="This decision overrides any community votes and sets the final precedent for similar content.", 
+            inline=False
+        )
         
         return embed
     

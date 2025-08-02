@@ -240,7 +240,7 @@ class ModerationManager:
                     "whitelist",
                     moderator_id,
                     moderator_name,
-                    "Approved for future use"
+                    "Whitelisted by community/staff vote"
                 )
                 update_data["whitelisted"] = True
             
@@ -272,7 +272,7 @@ class ModerationManager:
                     "blacklist",
                     moderator_id,
                     moderator_name,
-                    reason or "Blacklisted content"
+                    reason or "Blacklisted by community/staff vote"
                 )
                 update_data["blacklisted"] = True
             
