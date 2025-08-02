@@ -312,23 +312,42 @@ class ModerationReviewView(discord.ui.View):
                     self.bot.moderation_view_manager.remove_view(self.message_id)
                 
                 # Update the original message
-                await interaction.response.edit_message(embed=embed, view=self)
-                
-                # Send notification
-                action_text = "whitelisted" if decision == 'whitelist' else "blacklisted"
-                await interaction.followup.send(
-                    f"✅ **Decision Processed!**\nContent has been **{action_text}** by community vote.",
-                    ephemeral=True
-                )
+                if not interaction.response.is_done():
+                    await interaction.response.edit_message(embed=embed, view=self)
+                    
+                    # Send notification
+                    action_text = "whitelisted" if decision == 'whitelist' else "blacklisted"
+                    await interaction.followup.send(
+                        f"✅ **Decision Processed!**\nContent has been **{action_text}** by community vote.",
+                        ephemeral=True
+                    )
+                else:
+                    # If already responded, edit original and send followup
+                    await interaction.edit_original_response(embed=embed, view=self)
+                    
+                    action_text = "whitelisted" if decision == 'whitelist' else "blacklisted"
+                    await interaction.followup.send(
+                        f"✅ **Decision Processed!**\nContent has been **{action_text}** by community vote.",
+                        ephemeral=True
+                    )
                 
                 logger.info(f"Community moderation decision: {decision} for message {self.message_id}")
                 
             else:
-                await interaction.response.send_message("❌ Failed to process moderation decision.", ephemeral=True)
+                if not interaction.response.is_done():
+                    await interaction.response.send_message("❌ Failed to process moderation decision.", ephemeral=True)
+                else:
+                    await interaction.followup.send("❌ Failed to process moderation decision.", ephemeral=True)
                 
         except Exception as e:
             logger.error(f"Error processing moderation decision: {e}")
-            await interaction.response.send_message("❌ An error occurred processing the decision.", ephemeral=True)
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message("❌ An error occurred processing the decision.", ephemeral=True)
+                else:
+                    await interaction.followup.send("❌ An error occurred processing the decision.", ephemeral=True)
+            except:
+                pass  # Give up gracefully
     
     async def _update_vote_display(self, interaction: discord.Interaction):
         """Update the embed to show current vote counts"""
@@ -363,11 +382,31 @@ class ModerationReviewView(discord.ui.View):
             threshold_text = "Need 2+ whitelist votes (unless majority blacklist) for auto-approval"
             embed.set_footer(text=f"{threshold_text} • Use 📊 for details")
             
-            await interaction.response.edit_message(embed=embed, view=self)
+            # Try to update the message, but handle if already responded
+            if not interaction.response.is_done():
+                await interaction.response.edit_message(embed=embed, view=self)
+            else:
+                # If already responded, use followup to edit
+                await interaction.edit_original_response(embed=embed, view=self)
             
+        except discord.InteractionResponded:
+            # Interaction was already responded to, try editing original response
+            try:
+                await interaction.edit_original_response(embed=embed, view=self)
+            except Exception as edit_error:
+                logger.error(f"Error editing original response: {edit_error}")
+                # Send a simple follow-up message as last resort
+                await interaction.followup.send("✅ Vote recorded!", ephemeral=True)
         except Exception as e:
             logger.error(f"Error updating vote display: {e}")
-            await interaction.response.send_message("✅ Vote recorded!", ephemeral=True)
+            # Only try to respond if we haven't responded yet
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message("✅ Vote recorded!", ephemeral=True)
+                else:
+                    await interaction.followup.send("✅ Vote recorded!", ephemeral=True)
+            except:
+                pass  # Give up gracefully
 
 class ModerationViewManager:
     """Manages persistent moderation views"""
@@ -380,6 +419,8 @@ class ModerationViewManager:
         """Create a new moderation view"""
         view = ModerationReviewView(message_id, moderation_data, self.bot)
         self.active_views[message_id] = view
+        # Add to bot's persistent view store
+        self.bot.add_view(view)
         return view
     
     def get_view(self, message_id: str) -> Optional[ModerationReviewView]:
@@ -399,7 +440,7 @@ class ModerationViewManager:
         if not custom_id.startswith('mod_'):
             return False
         
-        # Parse custom_id: mod_{action}:{message_id}
+        # Parse custom_id to validate it's ours, but let Discord.py handle the actual callback
         try:
             parts = custom_id.split(':', 1)
             if len(parts) != 2:
@@ -408,34 +449,31 @@ class ModerationViewManager:
             action_part = parts[0]  # mod_{action}
             message_id = parts[1]
             
+            # Just validate the view exists, don't manually call callbacks
             view = self.get_view(message_id)
             if not view:
-                await interaction.response.send_message(
-                    "❌ This moderation request is no longer active.", 
-                    ephemeral=True
-                )
+                # Only respond if the view is missing
+                if not interaction.response.is_done():
+                    await interaction.response.send_message(
+                        "❌ This moderation request is no longer active.", 
+                        ephemeral=True
+                    )
                 return True
             
-            # Route to appropriate button handler
-            if action_part == 'mod_whitelist':
-                await view.whitelist_button.callback(view, interaction, view.whitelist_button)
-            elif action_part == 'mod_blacklist':
-                await view.blacklist_button.callback(view, interaction, view.blacklist_button)
-            elif action_part == 'mod_info':
-                await view.info_button.callback(view, interaction, view.info_button)
-            
-            return True
+            # Let Discord.py handle the actual callback automatically
+            return False  # Let Discord.py continue processing
             
         except Exception as e:
             logger.error(f"Error handling moderation interaction: {e}")
-            await interaction.response.send_message(
-                "❌ An error occurred processing your request.", 
-                ephemeral=True
-            )
+            if not interaction.response.is_done():
+                await interaction.response.send_message(
+                    "❌ An error occurred processing your request.", 
+                    ephemeral=True
+                )
             return True
     
     def setup_persistent_views(self):
         """Setup persistent views after bot restart"""
-        # This would be called on bot startup to restore active moderation views
-        # For now, we'll handle this through the interaction handler
-        pass
+        # Add all active views to the bot's persistent view store
+        for view in self.active_views.values():
+            self.bot.add_view(view)

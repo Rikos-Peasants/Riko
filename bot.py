@@ -105,6 +105,8 @@ class RikoBot(commands.Bot):
         try:
             from views.moderation_view import ModerationViewManager
             self.moderation_view_manager = ModerationViewManager(self)
+            # Setup persistent views
+            self.moderation_view_manager.setup_persistent_views()
             logger.info("✅ Moderation view manager initialized successfully")
         except Exception as e:
             logger.error(f"❌ Failed to initialize moderation view manager: {e}")
@@ -170,19 +172,16 @@ class RikoBot(commands.Bot):
     async def on_interaction(self, interaction: discord.Interaction):
         """Handle interactions including moderation buttons"""
         try:
-            # Let the default interaction handler process first
-            if interaction.type == discord.InteractionType.application_command:
-                return  # Let the command tree handle this
-            
-            # Handle moderation button interactions
+            # Handle moderation button interactions first (for validation only)
             if (interaction.type == discord.InteractionType.component 
                 and self.moderation_view_manager):
+                # Just validate, don't fully handle (let Discord.py handle callbacks)
                 handled = await self.moderation_view_manager.handle_interaction(interaction)
                 if handled:
-                    return
+                    return  # Error case handled
             
-            # If not handled by moderation system, continue with default processing
-            await super().on_interaction(interaction)
+            # Continue with default Discord.py processing for all other cases
+            # This includes both command tree and UI component callbacks
             
         except discord.InteractionResponded:
             # Interaction was already responded to
