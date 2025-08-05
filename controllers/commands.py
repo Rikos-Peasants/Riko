@@ -8,6 +8,7 @@ from typing import Optional, Union
 from models.role_manager import RoleManager
 from views.embeds import EmbedViews, PurgeConfirmationView
 from config import Config
+from controllers.security import CommandSecurity, SecurityLevel, public_command, moderator_command, admin_command, owner_command
 
 logger = logging.getLogger(__name__)
 
@@ -43,19 +44,21 @@ class CommandsController:
         
         # Add a simple debug command for testing
         @self.bot.command(name="debug")
+        @public_command
         async def debug_command(ctx):
             """Simple debug command to test text commands"""
             await ctx.send("🔧 Debug: Text commands are working!")
         
         # Add a simple owner test command
         @self.bot.hybrid_command(name="testowner", description="Test if you're a bot owner")
-        @commands.is_owner()
+        @owner_command
         async def test_owner_command(ctx):
             """Test command to verify bot owner status"""
             await ctx.send("✅ You are verified as a bot owner! Owner commands should work for you.")
         
         # Define the hybrid command
         @self.bot.hybrid_command(name="uptime", description="Check how long the bot has been running")
+        @public_command
         async def uptime_command(ctx):
             """Check how long the bot has been running"""
             try:
@@ -81,7 +84,7 @@ class CommandsController:
                 await ctx.send(embed=error_embed, ephemeral=True)
         
         @self.bot.hybrid_command(name="processold", description="Process old images from the past year (Bot owners only)")
-        @commands.is_owner()
+        @owner_command
         async def process_old_command(ctx):
             """Process old images from the past year and add them to the leaderboard"""
             try:
@@ -112,7 +115,7 @@ class CommandsController:
                 status_msg = "🔄 Processing old images from the past year...\nThis may take several minutes..."
                 if hasattr(ctx, 'followup'):
                     status_response = await ctx.followup.send(status_msg)
-                else:
+                else:                                           
                     status_response = await ctx.send(status_msg)
                 
                 # Process images from the past year
@@ -285,7 +288,7 @@ class CommandsController:
                     await ctx.send(embed=error_embed)
         
         @self.bot.hybrid_command(name="bestweek", description="Manually post the best image of this week (Bot owners only)")
-        @commands.is_owner()
+        @owner_command
         async def best_week_command(ctx):
             """Manually trigger best image of the week post"""
             try:
@@ -332,7 +335,7 @@ class CommandsController:
                     await ctx.send(embed=error_embed)
         
         @self.bot.hybrid_command(name="bestmonth", description="Manually post the best image of this month (Bot owners only)")
-        @commands.is_owner()
+        @owner_command
         async def best_month_command(ctx):
             """Manually trigger best image of the month post"""
             try:
@@ -380,7 +383,7 @@ class CommandsController:
                     await ctx.send(embed=error_embed)
         
         @self.bot.hybrid_command(name="bestyear", description="Manually post the best image of this year (Bot owners only)")
-        @commands.is_owner()
+        @owner_command
         async def best_year_command(ctx):
             """Manually trigger best image of the year post"""
             try:
@@ -419,6 +422,7 @@ class CommandsController:
                     await ctx.send(embed=error_embed)
         
         @self.bot.hybrid_command(name="leaderboard", description="Show the image upvote leaderboard")
+        @public_command
         async def leaderboard_command(ctx):
             """Show leaderboard of users by image upvotes"""
             try:
@@ -474,6 +478,7 @@ class CommandsController:
                     await ctx.send(embed=error_embed)
         
         @self.bot.hybrid_command(name="stats", description="Show your image posting statistics")
+        @public_command
         async def stats_command(ctx, user: Optional[discord.Member] = None):
             """Show stats for yourself or another user"""
             try:
@@ -544,7 +549,7 @@ class CommandsController:
                     await ctx.send(embed=error_embed)
         
         @self.bot.hybrid_command(name="dbstatus", description="Check MongoDB connection status (Bot owners only)")
-        @commands.is_owner()
+        @owner_command
         async def db_status_command(ctx):
             """Check MongoDB connection and show database statistics"""
             try:
@@ -609,28 +614,9 @@ class CommandsController:
                 else:
                     await ctx.send(embed=error_embed)
         
-        # Custom permission check for NSFWBAN commands
-        def can_use_nsfwban():
-            """Check if user can use NSFWBAN commands"""
-            async def predicate(ctx):
-                # Bot owners can always use the command
-                if await ctx.bot.is_owner(ctx.author):
-                    return True
-                
-                # Check if user has administrator permissions
-                if ctx.author.guild_permissions.administrator:
-                    return True
-                
-                # Check if user has the specific NSFWBAN moderator role
-                nsfwban_moderator_role = discord.utils.get(ctx.author.roles, id=Config.NSFWBAN_MODERATOR_ROLE_ID)
-                if nsfwban_moderator_role:
-                    return True
-                
-                return False
-            return commands.check(predicate)
 
         @self.bot.hybrid_command(name="nsfwban", description="Ban a user from NSFW content (Admins/NSFWBAN role only)")
-        @can_use_nsfwban()
+        @admin_command
         async def nsfwban_command(ctx, user: discord.Member, *, reason: str = "No reason provided"):
             """Ban a user from NSFW content"""
             try:
@@ -763,7 +749,7 @@ class CommandsController:
                     await ctx.send(embed=error_embed)
 
         @self.bot.hybrid_command(name="nsfwunban", description="Remove NSFW ban from a user (Admins/NSFWBAN role only)")
-        @can_use_nsfwban()
+        @admin_command
         async def nsfwunban_command(ctx, user: discord.Member):
             """Remove NSFW ban from a user"""
             try:
@@ -861,23 +847,9 @@ class CommandsController:
                 else:
                     await ctx.send(embed=error_embed)
 
-        # Warning system commands
-        def can_warn():
-            """Check if user can use warning commands (needs manage_guild permission)"""
-            async def predicate(ctx):
-                # Bot owners can always use the command
-                if await ctx.bot.is_owner(ctx.author):
-                    return True
-                
-                # Check if the user has manage_guild permission
-                if not ctx.author.guild_permissions.manage_guild:
-                    return False
-                
-                return True
-            return commands.check(predicate)
 
         @self.bot.hybrid_command(name="warn", description="Issue a warning to a user (Manage Server permission required)")
-        @can_warn()
+        @moderator_command
         async def warn_command(ctx, user: discord.Member, *, reason: str = "No reason provided"):
             """Issue a warning to a user with automatic escalation"""
             try:
@@ -1029,7 +1001,7 @@ class CommandsController:
                     await ctx.send(embed=error_embed)
 
         @self.bot.hybrid_command(name="warnings", description="View warnings for a user (Manage Server permission required)")
-        @can_warn()
+        @moderator_command
         async def warnings_command(ctx, user: discord.Member):
             """View warnings for a specific user"""
             try:
@@ -1074,7 +1046,7 @@ class CommandsController:
                     await ctx.send(embed=error_embed)
 
         @self.bot.hybrid_command(name="clearwarnings", description="Clear all warnings for a user (Manage Server permission required)")
-        @can_warn()
+        @moderator_command
         async def clearwarnings_command(ctx, user: discord.Member):
             """Clear all warnings for a user"""
             try:
@@ -1170,6 +1142,7 @@ class CommandsController:
                     await ctx.send(embed=error_embed)
 
         @self.bot.hybrid_command(name="quests", description="View your daily quests")
+        @public_command
         async def quests_command(ctx):
             """View or generate daily quests for the user"""
             try:
@@ -1198,6 +1171,7 @@ class CommandsController:
                 await ctx.send(embed=error_embed, ephemeral=True)
         
         @self.bot.hybrid_command(name="achievements", description="View your achievements")
+        @public_command
         async def achievements_command(ctx, user: Optional[discord.Member] = None):
             """View achievements for yourself or another user"""
             try:
@@ -1224,6 +1198,7 @@ class CommandsController:
                 await ctx.send(embed=error_embed, ephemeral=True)
         
         @self.bot.hybrid_command(name="streaks", description="View your streaks and consistency stats")
+        @public_command
         async def streaks_command(ctx, user: Optional[discord.Member] = None):
             """View streaks for yourself or another user"""
             try:
@@ -1250,6 +1225,7 @@ class CommandsController:
                 await ctx.send(embed=error_embed, ephemeral=True)
         
         @self.bot.hybrid_command(name="events", description="View active image contest events")
+        @public_command
         async def events_command(ctx):
             """View all active image contest events"""
             try:
@@ -1275,7 +1251,7 @@ class CommandsController:
                 await ctx.send(embed=error_embed, ephemeral=True)
         
         @self.bot.hybrid_command(name="createevent", description="Create a new image contest event (Bot owners only)")
-        @commands.is_owner()
+        @owner_command
         async def create_event_command(ctx, name: str, description: str, duration_hours: int = 24):
             """Create a new image contest event"""
             try:
@@ -1351,7 +1327,7 @@ class CommandsController:
                 await ctx.send(embed=error_embed, ephemeral=True)
         
         @self.bot.hybrid_command(name="endevent", description="End an active event and announce winner (Bot owners only)")
-        @commands.is_owner()
+        @owner_command
         async def end_event_command(ctx, event_name: str):
             """End an active event and announce the winner"""
             try:
@@ -1402,7 +1378,7 @@ class CommandsController:
                 await ctx.send(embed=error_embed, ephemeral=True)
 
         @self.bot.hybrid_command(name="setlogchannel", description="Set log channels for different systems (Manage Server permission required)")
-        @can_warn()
+        @moderator_command
         async def setlogchannel_command(ctx, log_type: str = None, channel: Optional[discord.TextChannel] = None):
             """Set or view log channels for different systems"""
             try:
@@ -1619,7 +1595,7 @@ class CommandsController:
                     await ctx.send(embed=error_embed)
 
         @self.bot.hybrid_command(name="testbest", description="Test best image functionality with custom date range (Bot owners only)")
-        @commands.is_owner()
+        @owner_command
         async def test_best_command(ctx, days_back: int = 7, channel_id: Optional[int] = None):
             """Test best image functionality with custom parameters"""
             try:
@@ -1709,7 +1685,7 @@ class CommandsController:
                     await ctx.send(embed=error_embed)
 
         @self.bot.hybrid_command(name="updatescore", description="Update scores for recent images by re-scanning reactions (Bot owners only)")
-        @commands.is_owner()
+        @owner_command
         async def update_score_command(ctx, days_back: int = 7, channel_id: Optional[int] = None):
             """Update scores for recent images by re-scanning their reactions"""
             try:
@@ -1840,7 +1816,7 @@ class CommandsController:
                     await ctx.send(embed=error_embed)
 
         @self.bot.hybrid_command(name="debugreactions", description="Debug reaction tracking setup (Bot owners only)")
-        @commands.is_owner()
+        @owner_command
         async def debug_reactions_command(ctx):
             """Debug reaction tracking configuration and test setup"""
             try:
@@ -1911,7 +1887,7 @@ class CommandsController:
 
         # YouTube monitoring command group
         @self.bot.hybrid_group(name="youtube", description="Manage YouTube video monitoring")
-        @commands.is_owner()
+        @owner_command
         async def youtube_group(ctx):
             """Base group for YouTube monitoring commands"""
             if ctx.invoked_subcommand is None:
@@ -2038,23 +2014,9 @@ class CommandsController:
                 else:
                     await ctx.send(embed=error_embed)
 
-        # Moderation system commands
-        def can_use_moderation():
-            """Check if user can use moderation commands"""
-            async def predicate(ctx):
-                # Bot owners can always use the command
-                if await ctx.bot.is_owner(ctx.author):
-                    return True
-                
-                # Check if user has administrator permissions
-                if ctx.author.guild_permissions.administrator:
-                    return True
-                
-                return False
-            return commands.check(predicate)
 
         @self.bot.hybrid_command(name="overrule", description="Admin overrule of moderation decision (Admin permissions required)")
-        @can_use_moderation()
+        @admin_command
         async def overrule_command(ctx, message_id: str, is_allowed: bool, *, reason: str = "Admin overrule"):
             """Admin overrule of moderation decision"""
             try:
@@ -2195,7 +2157,7 @@ class CommandsController:
                     await ctx.send(embed=error_embed)
 
         @self.bot.hybrid_command(name="modconfig", description="Configure moderation system settings (Admin permissions required)")
-        @can_use_moderation()
+        @admin_command
         async def modconfig_command(ctx, setting: str = None, value: str = None):
             """Configure moderation system settings"""
             try:
@@ -2339,7 +2301,7 @@ class CommandsController:
                     await ctx.send(embed=error_embed)
 
         @self.bot.hybrid_command(name="modstats", description="Show moderation statistics (Admin permissions required)")
-        @can_use_moderation()
+        @admin_command
         async def modstats_command(ctx, days: int = 30):
             """Show moderation statistics"""
             try:
@@ -2621,7 +2583,7 @@ class CommandsController:
         self.debug_reactions_command = debug_reactions_command
 
         @self.bot.hybrid_command(name='debug_events', description='Debug events system (Bot owners only)')
-        @commands.is_owner()
+        @owner_command
         async def debug_events_cmd(ctx):
             """Debug the events system to see what's wrong"""
             try:
@@ -2718,7 +2680,7 @@ class CommandsController:
                 await ctx.send(f"❌ Failed to debug events: {str(e)}")
         
         @self.bot.hybrid_command(name='force_check_expired', description='Force check for expired events (Bot owners only)')
-        @commands.is_owner()
+        @owner_command
         async def force_check_expired_cmd(ctx):
             """Manually trigger the expired events check"""
             try:
@@ -2756,6 +2718,7 @@ class CommandsController:
         
         # BOOKMARK COMMANDS
         @self.bot.hybrid_command(name='bookmark', description='Bookmark an image message')
+        @public_command
         async def bookmark_cmd(ctx, message_id: Optional[str] = None):
             """Bookmark an image message by ID or reply to a message"""
             try:
@@ -2799,6 +2762,7 @@ class CommandsController:
                 await ctx.send(f"❌ Failed to bookmark image: {str(e)}")
         
         @self.bot.hybrid_command(name='unbookmark', description='Remove a bookmark')
+        @public_command
         async def unbookmark_cmd(ctx, message_id: Optional[str] = None):
             """Remove a bookmark by message ID or reply to a message"""
             try:
@@ -2832,6 +2796,7 @@ class CommandsController:
                 await ctx.send(f"❌ Failed to remove bookmark: {str(e)}")
         
         @self.bot.hybrid_command(name='bookmarks', description='View your bookmarked images')
+        @public_command
         async def bookmarks_cmd(ctx, page: int = 1):
             """View your bookmarked images with pagination"""
             try:
@@ -2902,6 +2867,7 @@ class CommandsController:
                 await ctx.send(f"❌ Failed to get bookmarks: {str(e)}")
         
         @self.bot.hybrid_command(name='clear_bookmarks', description='Clear all your bookmarks')
+        @owner_command
         async def clear_bookmarks_cmd(ctx):
             """Clear all bookmarks for the user"""
             try:
@@ -2931,6 +2897,7 @@ class CommandsController:
                 await ctx.send(f"❌ Failed to clear bookmarks: {str(e)}")
         
         @self.bot.hybrid_command(name='liked_images', description='View images you or another user has liked')
+        @public_command
         async def liked_images_cmd(ctx, user: Optional[discord.Member] = None, page: int = 1):
             """View images that a user has liked with pagination"""
             try:
@@ -3014,7 +2981,7 @@ class CommandsController:
                 await ctx.send(f"❌ Failed to get liked images: {str(e)}")
         
         @self.bot.hybrid_command(name='process_old_reactions', description='Process old reactions to build likes database (Bot owners only)')
-        @commands.is_owner()
+        @owner_command
         async def process_old_reactions_cmd(ctx, limit: int = 100):
             """Process old reactions from image messages to build the likes database"""
             try:
@@ -3098,7 +3065,7 @@ class CommandsController:
                 await ctx.send(f"❌ Failed to process old reactions: {str(e)}")
         
         @self.bot.hybrid_command(name='rebuild_likes_db', description='Rebuild the entire likes database (Bot owners only)')
-        @commands.is_owner()
+        @owner_command
         async def rebuild_likes_db_cmd(ctx):
             """Rebuild the entire likes database from scratch"""
             try:
@@ -3184,7 +3151,7 @@ class CommandsController:
                 await ctx.send(f"❌ Failed to rebuild likes database: {str(e)}")
         
         @self.bot.hybrid_command(name='test_bookmark', description='Test bookmark functionality (Bot owners only)')
-        @commands.is_owner()
+        @owner_command
         async def test_bookmark_cmd(ctx, message_id: str):
             """Test bookmark functionality on a specific message"""
             try:
@@ -3228,7 +3195,7 @@ class CommandsController:
         
         # PURGE COMMANDS
         @self.bot.hybrid_group(name='purge', description='Purge messages with various filters')
-        @commands.has_permissions(manage_messages=True)
+        @admin_command
         async def purge_group(ctx):
             """Purge messages with various filters"""
             if ctx.invoked_subcommand is None:
@@ -3248,16 +3215,19 @@ class CommandsController:
                 await ctx.send(embed=embed, ephemeral=True)
         
         @purge_group.command(name='humans', description='Delete messages from human users only')
+        @admin_command
         async def purge_humans_cmd(ctx, amount: int = 100):
             """Delete messages from human users only"""
             await self._execute_purge(ctx, lambda msg: not msg.author.bot, amount, "humans")
         
         @purge_group.command(name='bots', description='Delete messages from bots only')
+        @admin_command
         async def purge_bots_cmd(ctx, amount: int = 100):
             """Delete messages from bots only"""
             await self._execute_purge(ctx, lambda msg: msg.author.bot, amount, "bots")
         
         @purge_group.command(name='media', description='Delete messages with attachments/images')
+        @admin_command
         async def purge_media_cmd(ctx, amount: int = 100):
             """Delete messages with attachments or embedded media"""
             def filter_media(message):
@@ -3266,30 +3236,24 @@ class CommandsController:
             await self._execute_purge(ctx, filter_media, amount, "media")
         
         @purge_group.command(name='embeds', description='Delete messages with embeds')
+        @admin_command
         async def purge_embeds_cmd(ctx, amount: int = 100):
             """Delete messages containing embeds"""
             await self._execute_purge(ctx, lambda msg: len(msg.embeds) > 0, amount, "embeds")
         
         @purge_group.command(name='all', description='Delete all messages')
+        @admin_command
         async def purge_all_cmd(ctx, amount: int = 100):
             """Delete all messages regardless of type"""
             await self._execute_purge(ctx, lambda msg: True, amount, "all")
 
         @purge_group.command(name='user', description='Delete messages from a specific user')
+        @admin_command
         async def purge_user_cmd(ctx, user: discord.Member, amount: int = 100, *, reason: str = "Admin purge"):
             """Delete messages from a specific user"""
             try:
                 if hasattr(ctx, 'defer'):
                     await ctx.defer()
-                
-                # Check if user has admin permissions
-                if not (await ctx.bot.is_owner(ctx.author) or ctx.author.guild_permissions.administrator):
-                    error_msg = "❌ You need administrator permissions to use this command."
-                    if hasattr(ctx, 'followup'):
-                        await ctx.followup.send(error_msg, ephemeral=True)
-                    else:
-                        await ctx.send(error_msg)
-                    return
                 
                 # Validate guild
                 if not ctx.guild or ctx.guild.id != Config.GUILD_ID:
@@ -3381,20 +3345,12 @@ class CommandsController:
                     await ctx.send(embed=error_embed)
 
         @purge_group.command(name='contains', description='Delete messages containing specific text')
+        @admin_command
         async def purge_contains_cmd(ctx, *, search_text: str):
             """Delete messages containing specific text"""
             try:
                 if hasattr(ctx, 'defer'):
                     await ctx.defer()
-                
-                # Check if user has admin permissions
-                if not (await ctx.bot.is_owner(ctx.author) or ctx.author.guild_permissions.administrator):
-                    error_msg = "❌ You need administrator permissions to use this command."
-                    if hasattr(ctx, 'followup'):
-                        await ctx.followup.send(error_msg, ephemeral=True)
-                    else:
-                        await ctx.send(error_msg)
-                    return
                 
                 # Validate guild
                 if not ctx.guild or ctx.guild.id != Config.GUILD_ID:
@@ -3523,7 +3479,7 @@ class CommandsController:
 
         # WELCOME/LEAVE SYSTEM COMMANDS
         @self.bot.hybrid_group(name='greet', description='Manage welcome and leave messages')
-        @commands.has_permissions(manage_guild=True)
+        @moderator_command
         async def greet_group(ctx):
             """Welcome and leave message management commands"""
             if ctx.invoked_subcommand is None:
@@ -3557,7 +3513,8 @@ class CommandsController:
                 )
                 await ctx.send(embed=embed, ephemeral=True)
 
-        @greet_group.command(name='welcome', description='Set the welcome channel')
+        @greet_group.command(name='welcome', description='Set the welcome channel (Manage Server permission required)')
+        @moderator_command
         async def greet_welcome_cmd(ctx, channel: discord.TextChannel):
             """Set the welcome channel for the server"""
             try:
@@ -3618,7 +3575,8 @@ class CommandsController:
                 else:
                     await ctx.send(embed=error_embed)
 
-        @greet_group.command(name='leave', description='Set the leave channel')
+        @greet_group.command(name='leave', description='Set the leave channel (Manage Server permission required)')
+        @moderator_command
         async def greet_leave_cmd(ctx, channel: discord.TextChannel):
             """Set the leave channel for the server"""
             try:
@@ -3679,7 +3637,8 @@ class CommandsController:
                 else:
                     await ctx.send(embed=error_embed)
 
-        @greet_group.command(name='disable', description='Disable welcome or leave messages')
+        @greet_group.command(name='disable', description='Disable welcome or leave messages (Manage Server permission required)')
+        @moderator_command
         async def greet_disable_cmd(ctx, type: str):
             """Disable welcome or leave messages"""
             try:
@@ -3751,7 +3710,8 @@ class CommandsController:
                 else:
                     await ctx.send(embed=error_embed)
 
-        @greet_group.command(name='embed', description='Set custom welcome or leave message')
+        @greet_group.command(name='embed', description='Set custom welcome or leave message (Manage Server permission required)')
+        @moderator_command
         async def greet_embed_cmd(ctx, type: str, *, json_data: str):
             """Set custom welcome or leave message using JSON"""
             try:
@@ -3854,6 +3814,7 @@ class CommandsController:
 
         # THREAD MANAGEMENT COMMANDS
         @self.bot.hybrid_command(name='closethread', description='Close your active help thread')
+        @public_command
         async def close_thread_cmd(ctx):
             """Close the user's active help thread"""
             try:
